@@ -26,7 +26,7 @@ PNG_1PX = base64.b64encode(
 WAV = base64.b64encode(b"RIFF\x24\x00\x00\x00WAVEfmt ").decode()
 MP4 = b"\x00\x00\x00\x18ftypmp42video-falso"
 FLUJOS_VIDEO = ("h3-ref", "ltx25-i2v", "wan22-i2v", "wan22-ti2v-5b")
-FLUJOS_IMAGEN = ("zimage-t2i", "qwen-edit-ref")
+FLUJOS_IMAGEN = ("zimage-t2i", "qwen-edit-ref", "qwen-edit-rapido")
 FLUJOS = FLUJOS_VIDEO + FLUJOS_IMAGEN
 
 
@@ -352,7 +352,7 @@ class PruebasFlujos(unittest.TestCase):
             for img in (True, False):
                 for aud in (True, False):
                     for gen in (True, False):
-                        con_refs = nombre in ("h3-ref", "qwen-edit-ref")
+                        con_refs = nombre in ("h3-ref", "qwen-edit-ref", "qwen-edit-rapido")
                         b = {"imagen_inicial": img, "audio_referencia": aud, "generar_audio": gen,
                              "referencias": con_refs}
                         refs = ["r1.png", "r2.png"] if con_refs else []
@@ -408,6 +408,34 @@ class PruebasFlujos(unittest.TestCase):
         self.assertNotIn("ref_2", p)
         with self.assertRaisesRegex(h.ErrorTrabajo, "máximo 3"):
             h.armar_prompt_api(cargar("qwen-edit-ref"), self.VALORES, {}, ["a", "b", "c", "d"])
+
+    def test_qwen_rapido_lora_lightning_4_pasos(self):
+        p = h.armar_prompt_api(cargar("qwen-edit-rapido"), self.VALORES, {"referencias": True},
+                               ["a.png", "b.png"])
+        lora = p["14"]
+        self.assertEqual(lora["class_type"], "LoraLoaderModelOnly")
+        self.assertEqual(lora["inputs"]["lora_name"], "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors")
+        self.assertEqual(lora["inputs"]["strength_model"], 1.0)
+        self.assertEqual(lora["inputs"]["model"], ["3", 0])  # después de CFGNorm, como la plantilla
+        self.assertEqual(p["3"]["inputs"]["model"], ["2", 0])
+        self.assertEqual(p["2"]["inputs"]["shift"], 3.1)
+        k = p["11"]["inputs"]
+        self.assertEqual((k["steps"], k["cfg"], k["sampler_name"], k["scheduler"], k["model"]),
+                         (4, 1.0, "euler", "simple", ["14", 0]))
+        for nid in ("6", "7"):
+            self.assertEqual(p[nid]["inputs"]["image1"], ["ref_1", 0])
+            self.assertEqual(p[nid]["inputs"]["image2"], ["ref_2", 0])
+            self.assertNotIn("image3", p[nid]["inputs"])
+        meta = cargar("qwen-edit-rapido")["_meta"]
+        self.assertEqual(meta["carpetas_de_modelos"]["Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors"],
+                         "loras")
+        # fuera de la LoRA y el KSampler, el grafo es el mismo que qwen-edit-ref
+        base = h.armar_prompt_api(cargar("qwen-edit-ref"), self.VALORES, {"referencias": True}, ["a.png", "b.png"])
+        for nid in base:
+            if nid != "11":
+                self.assertEqual(p[nid], base[nid], nid)
+        with self.assertRaisesRegex(h.ErrorTrabajo, "máximo 3"):
+            h.armar_prompt_api(cargar("qwen-edit-rapido"), self.VALORES, {}, ["a", "b", "c", "d"])
 
     def test_extraer_imagenes(self):
         self.assertEqual(len(h.extraer_imagenes(historial_imagen())), 1)
@@ -643,6 +671,32 @@ class PruebasHandlerCompleto(BaseConCarpetas):
         self.assertEqual(p["7"]["inputs"]["prompt"], "borroso")
         self.assertTrue(p["ref_1"]["inputs"]["image"].endswith("hoja.png"))
         self.assertNotIn("ref_2", p)
+
+    def test_qwen_rapido_probador(self):
+        falso = ComfyFalso(historial=historial_imagen())
+        r = self.correr_imagen({"flujo": "qwen-edit-rapido", "prompt": "Dress the woman from Picture 1 in the corset from Picture 2",
+                                "prompt_negativo": "deformed", "ancho": 768, "alto": 1024, "semilla": 11,
+                                "referencias": [imagen("clienta.png"),
+                                                {"nombre": "corse.jpg", "mime": "image/jpeg",
+                                                 "url": "https://ejemplo.com/corse.jpg"}]}, falso)
+        self.assertNotIn("error", r, r.get("error"))
+        self.assertEqual((r["mime"], r["flujo"], r["ancho"], r["alto"], r["semilla"]),
+                         ("image/png", "qwen-edit-rapido", 768, 1024, 11))
+        self.assertEqual(base64.b64decode(r["imagen_base64"]), base64.b64decode(PNG_1PX))
+        p = falso.prompt_enviado
+        self.assertTrue(p["ref_1"]["inputs"]["image"].endswith("clienta.png"))
+        self.assertTrue(p["ref_2"]["inputs"]["image"].endswith("corse.jpg"))
+        self.assertEqual((p["11"]["inputs"]["steps"], p["11"]["inputs"]["seed"]), (4, 11))
+        self.assertEqual(p["7"]["inputs"]["prompt"], "deformed")
+        self.assertEqual(os.listdir(os.path.join(self.tmp, "input")), [])
+
+    def test_qwen_rapido_sin_lora_en_el_volumen(self):
+        info = object_info_completo()
+        info["LoraLoaderModelOnly"]["input"]["required"]["lora_name"][0].remove(
+            "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors")
+        r = self.correr_imagen({"flujo": "qwen-edit-rapido", "prompt": "x", "referencias": [imagen()]},
+                               ComfyFalso(object_info=info))
+        self.assertIn("Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors (carpeta models/loras/)", r["error"])
 
     def test_imagen_sin_salida(self):
         r = self.correr_imagen({"flujo": "zimage-t2i", "prompt": "x"}, ComfyFalso(historial=historial_ok()))

@@ -84,6 +84,11 @@ FLUJOS: dict[str, dict] = {
         "tipo": "imagen", "multiplo": 16, "dimensiones": (768, 1344),
         "requiere_imagen": False, "requiere_referencias": True, "max_referencias": 3,
     },
+    # Probador rápido: igual que qwen-edit-ref con la LoRA Lightning de 4 pasos (cfg 1).
+    "qwen-edit-rapido": {
+        "tipo": "imagen", "multiplo": 16, "dimensiones": (768, 1344),
+        "requiere_imagen": False, "requiere_referencias": True, "max_referencias": 3,
+    },
 }
 
 
@@ -255,7 +260,7 @@ def validar_entrada(entrada) -> dict:
     else:
         referencias = []  # los demás flujos no usan referencias
     if es_imagen:
-        # Los flujos de imagen no tienen primer fotograma: en qwen-edit-ref la
+        # Los flujos de imagen no tienen primer fotograma: en qwen-edit-ref/-rapido la
         # imagen_inicial ya pasó a ser la referencia 1; en zimage-t2i se ignora.
         imagen = None
     if not reglas.get("usa_audio_referencia"):

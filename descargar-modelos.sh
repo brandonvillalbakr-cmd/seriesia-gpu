@@ -124,7 +124,7 @@ bajar_h3() {
 }
 
 bajar_imagen() {
-  echo "== Imagen: Z-Image Turbo + Qwen-Image-Edit 2511 (fp8mixed) — Apache 2.0, ~51 GB =="
+  echo "== Imagen: Z-Image Turbo + Qwen-Image-Edit 2511 (fp8mixed) + LoRA Lightning 4/8 pasos — Apache 2.0, ~53 GB =="
   # Comfy-Org renombró estos repos (z_image_turbo → Z-Image-Turbo, Qwen-Image_ComfyUI → Qwen-Image,
   # Qwen-Image-Edit_ComfyUI → Qwen-Image-Edit); se usan los nombres nuevos para no depender de la redirección.
   bajar Comfy-Org/Z-Image-Turbo split_files/diffusion_models/z_image_turbo_bf16.safetensors diffusion_models
@@ -133,6 +133,9 @@ bajar_imagen() {
   bajar Comfy-Org/Qwen-Image-Edit split_files/diffusion_models/qwen_image_edit_2511_fp8mixed.safetensors diffusion_models
   bajar Comfy-Org/Qwen-Image split_files/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors text_encoders
   bajar Comfy-Org/Qwen-Image split_files/vae/qwen_image_vae.safetensors vae
+  # LoRA Lightning (lightx2v) para el flujo qwen-edit-rapido: 4 pasos con cfg 1; la de 8 pasos es el plan B de calidad.
+  bajar lightx2v/Qwen-Image-Edit-2511-Lightning Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors loras
+  bajar lightx2v/Qwen-Image-Edit-2511-Lightning Qwen-Image-Edit-2511-Lightning-8steps-V1.0-bf16.safetensors loras
 }
 
 case "$OPCION" in

@@ -1,0 +1,97 @@
+{
+  "_meta": {
+    "descripcion": "Probador rápido: Qwen-Image-Edit 2511 (fp8mixed) + LoRA Lightning de 4 pasos (lightx2v). Mismo contrato que qwen-edit-ref (1 a 3 referencias + prompt → una imagen), pero 4 pasos con cfg 1 en vez de 40 con cfg 4 (~10 veces menos trabajo del modelo). Pensado para prueba virtual de ropa (la clienta en Picture 1, la prenda en Picture 2).",
+    "tipo": "imagen",
+    "fuente_verificada": [
+      "https://github.com/Comfy-Org/workflow_templates/blob/main/templates/image_qwen_image_edit_2511.json (subgrafo «Image Edit (Qwen-Image 2511)»: interruptor «Enable 4steps LoRA?» → LoraLoaderModelOnly 'Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors' fuerza 1 conectado DESPUÉS de CFGNorm, Steps 4, CFG 1, KSampler euler/simple; revisado el 8/11/2026)",
+      "https://huggingface.co/lightx2v/Qwen-Image-Edit-2511-Lightning (sha 107d238d; LoRA destilada de 4 pasos bf16 y también de 8 pasos)",
+      "https://docs.comfy.org/tutorials/image/qwen/qwen-image-edit-2511",
+      "https://github.com/Comfy-Org/ComfyUI/blob/v0.44.2/comfy_extras/nodes_cfg.py (CFGNorm post-CFG: con cfg 1 el resultado combinado es el positivo y la norma no cambia nada; se deja igual que la plantilla)"
+    ],
+    "fecha_verificacion": "2026-11-08",
+    "comfyui_minimo": "v0.44.2 (la que instala el Dockerfile)",
+    "nodos_requeridos": [
+      "UNETLoader",
+      "ModelSamplingAuraFlow",
+      "CFGNorm",
+      "LoraLoaderModelOnly",
+      "CLIPLoader",
+      "VAELoader",
+      "LoadImage",
+      "TextEncodeQwenImageEditPlus",
+      "FluxKontextMultiReferenceLatentMethod",
+      "EmptySD3LatentImage",
+      "KSampler",
+      "VAEDecode",
+      "SaveImage"
+    ],
+    "nodos_personalizados": "ninguno (todo nativo de ComfyUI). El handler agrega un LoadImage por referencia y lo conecta a 'image1'..'image3' de los nodos 6 (positivo) y 7 (negativo), igual que la plantilla.",
+    "referencias": {
+      "nodos": [
+        "6",
+        "7"
+      ],
+      "prefijo": "image",
+      "inicio": 1,
+      "maximo": 3
+    },
+    "modelos": [
+      {
+        "archivo": "qwen_image_edit_2511_fp8mixed.safetensors",
+        "carpeta": "diffusion_models",
+        "repo": "Comfy-Org/Qwen-Image-Edit",
+        "ruta": "split_files/diffusion_models/qwen_image_edit_2511_fp8mixed.safetensors",
+        "gb": 20.53
+      },
+      {
+        "archivo": "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+        "carpeta": "text_encoders",
+        "repo": "Comfy-Org/Qwen-Image",
+        "ruta": "split_files/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors",
+        "gb": 9.38
+      },
+      {
+        "archivo": "qwen_image_vae.safetensors",
+        "carpeta": "vae",
+        "repo": "Comfy-Org/Qwen-Image",
+        "ruta": "split_files/vae/qwen_image_vae.safetensors",
+        "gb": 0.25
+      },
+      {
+        "archivo": "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
+        "carpeta": "loras",
+        "repo": "lightx2v/Qwen-Image-Edit-2511-Lightning",
+        "ruta": "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
+        "gb": 0.85
+      }
+    ],
+    "carpetas_de_modelos": {
+      "qwen_image_edit_2511_fp8mixed.safetensors": "diffusion_models",
+      "qwen_2.5_vl_7b_fp8_scaled.safetensors": "text_encoders",
+      "qwen_image_vae.safetensors": "vae",
+      "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors": "loras"
+    },
+    "parametros": "Igual que la plantilla oficial con «Enable 4steps LoRA?» encendido: UNETLoader → ModelSamplingAuraFlow shift 3.1 → CFGNorm 1 → LoraLoaderModelOnly (Lightning 4 pasos, fuerza 1.0) → KSampler 4 pasos, cfg 1, euler/simple, denoise 1. Con cfg 1 ComfyUI no evalúa el negativo (optimización cfg1), así que «prompt_negativo» casi no influye; se deja conectado para no cambiar el contrato. Latente EmptySD3LatentImage con ancho/alto del pedido (lados múltiplo de 16), como qwen-edit-ref.",
+    "prompt_negativo_defecto": "",
+    "vram_aproximada": "La misma de qwen-edit-ref (~24–32 GB) + 0,85 GB de la LoRA.",
+    "licencia": "Qwen-Image-Edit-2511: Apache 2.0 (Qwen).",
+    "_TODO": [
+      "Si la prenda o la cara salen peor que con 40 pasos, probar la LoRA de 8 pasos (Qwen-Image-Edit-2511-Lightning-8steps-V1.0-bf16.safetensors, ya en models/loras) con steps 8.",
+      "En el prompt, las referencias se llaman «Picture 1», «Picture 2», «Picture 3» en el orden de «referencias»."
+    ]
+  },
+  "1": {"class_type": "UNETLoader", "inputs": {"unet_name": "qwen_image_edit_2511_fp8mixed.safetensors", "weight_dtype": "default"}},
+  "2": {"class_type": "ModelSamplingAuraFlow", "inputs": {"model": ["1", 0], "shift": 3.1}},
+  "3": {"class_type": "CFGNorm", "inputs": {"model": ["2", 0], "strength": 1.0, "pre_cfg": false}},
+  "14": {"class_type": "LoraLoaderModelOnly", "_meta": {"title": "LoRA Lightning 4 pasos (después de CFGNorm, como la plantilla)"}, "inputs": {"model": ["3", 0], "lora_name": "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors", "strength_model": 1.0}},
+  "4": {"class_type": "CLIPLoader", "inputs": {"clip_name": "qwen_2.5_vl_7b_fp8_scaled.safetensors", "type": "qwen_image", "device": "default"}},
+  "5": {"class_type": "VAELoader", "inputs": {"vae_name": "qwen_image_vae.safetensors"}},
+  "6": {"class_type": "TextEncodeQwenImageEditPlus", "_meta": {"title": "Prompt (el handler conecta image1..image3)"}, "inputs": {"clip": ["4", 0], "vae": ["5", 0], "prompt": "{{PROMPT}}"}},
+  "7": {"class_type": "TextEncodeQwenImageEditPlus", "_meta": {"title": "Prompt negativo (con las mismas referencias)"}, "inputs": {"clip": ["4", 0], "vae": ["5", 0], "prompt": "{{PROMPT_NEGATIVO}}"}},
+  "8": {"class_type": "FluxKontextMultiReferenceLatentMethod", "inputs": {"conditioning": ["6", 0], "reference_latents_method": "index_timestep_zero"}},
+  "9": {"class_type": "FluxKontextMultiReferenceLatentMethod", "inputs": {"conditioning": ["7", 0], "reference_latents_method": "index_timestep_zero"}},
+  "10": {"class_type": "EmptySD3LatentImage", "inputs": {"width": "{{ANCHO}}", "height": "{{ALTO}}", "batch_size": 1}},
+  "11": {"class_type": "KSampler", "inputs": {"model": ["14", 0], "seed": "{{SEMILLA}}", "steps": 4, "cfg": 1.0, "sampler_name": "euler", "scheduler": "simple", "positive": ["8", 0], "negative": ["9", 0], "latent_image": ["10", 0], "denoise": 1.0}},
+  "12": {"class_type": "VAEDecode", "inputs": {"samples": ["11", 0], "vae": ["5", 0]}},
+  "13": {"class_type": "SaveImage", "inputs": {"images": ["12", 0], "filename_prefix": "{{PREFIJO_SALIDA}}"}}
+}

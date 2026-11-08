@@ -34,11 +34,14 @@ Total para los 4 de video: **~130 GB**.
 |---|---|---|---|---|---|
 | `zimage-t2i` | Z-Image Turbo 6B (bf16) | Solo `prompt` | 8, cfg 1 (`res_multistep`) | 768×1344 (múltiplo de 16) | ~20,7 GB |
 | `qwen-edit-ref` | Qwen-Image-Edit 2511 (fp8mixed) | `referencias` (1–3) **o** `imagen_inicial` | 40, cfg 4 (`euler`) | 768×1344 (múltiplo de 16) | ~30,2 GB |
+| `qwen-edit-rapido` | Qwen-Image-Edit 2511 (fp8mixed) + LoRA Lightning 4 pasos (lightx2v) | igual que `qwen-edit-ref` | 4, cfg 1 (`euler`) | 768×1344 (múltiplo de 16) | +0,85 GB (la LoRA, en `loras/`) |
 
 Total para los 2 de imagen: **~51 GB**. **Los 6 flujos suman ~181 GB**: caben en el volumen de 200 GB, pero queda poco margen (agrándalo si se suman más modelos; se puede agrandar, no achicar).
 
 - `zimage-t2i`: plantilla oficial `image_z_image_turbo` tal cual (UNETLoader → ModelSamplingAuraFlow shift 3 → KSampler; CLIPLoader tipo `lumina2` con `qwen_3_4b`; VAE `ae`). **Ignora `prompt_negativo`**: la plantilla usa cfg 1 con el negativo en cero (ConditioningZeroOut), así que un negativo no cambiaría nada.
 - `qwen-edit-ref`: plantilla oficial `image_qwen_image_edit_2511` con sus valores por defecto (sin la LoRA Lightning). Las referencias entran en `image1..image3` de los dos `TextEncodeQwenImageEditPlus` (positivo y negativo). **En el prompt, nómbralas «Picture 1», «Picture 2», «Picture 3»** en el orden de `referencias` (así las rotula el nodo). Única diferencia con la plantilla: el latente es `EmptySD3LatentImage` con el `ancho`/`alto` del pedido (la plantilla toma el tamaño de la imagen 1), para que salga 9:16 aunque las hojas tengan otra forma.
+
+- `qwen-edit-rapido`: el mismo grafo de `qwen-edit-ref` con el interruptor «Enable 4steps LoRA?» de la plantilla encendido: `LoraLoaderModelOnly` (fuerza 1) después de `CFGNorm`, KSampler 4 pasos y cfg 1. Pensado para el probador de ropa (clienta en Picture 1, prenda en Picture 2). Con cfg 1 el `prompt_negativo` casi no influye. Plan B de calidad: la LoRA de 8 pasos ya está en el volumen.
 
 Todos usan **solo nodos nativos de ComfyUI** (las plantillas oficiales de Comfy-Org ya no necesitan nodos personalizados para H3, LTX-2.5, Wan 2.2, Z-Image ni Qwen-Image-Edit). La imagen igual instala VideoHelperSuite y KJNodes con commit fijo, por si luego se usan.
 
