@@ -1,0 +1,45 @@
+{
+  "_meta": {
+    "descripcion": "Z-Image Turbo (6B, destilado a 8 pasos): texto a imagen. Rápido y barato, para fondos, lugares, primeras hojas de personaje y fotogramas iniciales de video.",
+    "tipo": "imagen",
+    "fuente_verificada": [
+      "https://github.com/Comfy-Org/workflow_templates/blob/main/templates/image_z_image_turbo.json (commit 21d7cc4f, 6/11/2026; subgrafo «Text to Image (Z-Image-Turbo)»)",
+      "https://docs.comfy.org/tutorials/image/z-image/z-image-turbo",
+      "https://huggingface.co/Comfy-Org/Z-Image-Turbo (antes Comfy-Org/z_image_turbo; sha 6fc90a3b)",
+      "https://github.com/Comfy-Org/ComfyUI/blob/v0.44.2/nodes.py (CLIPLoader: el tipo 'lumina2' con un Qwen3 4B carga comfy.text_encoders.z_image en comfy/sd.py, rama TEModel.QWEN3_4B)",
+      "https://github.com/Comfy-Org/ComfyUI/blob/v0.44.2/comfy_extras/nodes_sd3.py (EmptySD3LatentImage: ancho/alto paso 16, latente de 16 canales /8)",
+      "https://github.com/Comfy-Org/ComfyUI/blob/v0.44.2/comfy_extras/nodes_model_advanced.py (ModelSamplingAuraFlow: entrada 'shift')"
+    ],
+    "fecha_verificacion": "2026-11-08",
+    "comfyui_minimo": "v0.44.2 (la que instala el Dockerfile)",
+    "nodos_requeridos": ["UNETLoader", "ModelSamplingAuraFlow", "CLIPLoader", "CLIPTextEncode", "ConditioningZeroOut", "VAELoader", "EmptySD3LatentImage", "KSampler", "VAEDecode", "SaveImage"],
+    "nodos_personalizados": "ninguno (todo nativo de ComfyUI)",
+    "modelos": [
+      {"archivo": "z_image_turbo_bf16.safetensors", "carpeta": "diffusion_models", "repo": "Comfy-Org/Z-Image-Turbo", "ruta": "split_files/diffusion_models/z_image_turbo_bf16.safetensors", "gb": 12.31},
+      {"archivo": "qwen_3_4b.safetensors", "carpeta": "text_encoders", "repo": "Comfy-Org/Z-Image-Turbo", "ruta": "split_files/text_encoders/qwen_3_4b.safetensors", "gb": 8.04},
+      {"archivo": "ae.safetensors", "carpeta": "vae", "repo": "Comfy-Org/Z-Image-Turbo", "ruta": "split_files/vae/ae.safetensors", "gb": 0.34}
+    ],
+    "carpetas_de_modelos": {
+      "z_image_turbo_bf16.safetensors": "diffusion_models",
+      "qwen_3_4b.safetensors": "text_encoders",
+      "ae.safetensors": "vae"
+    },
+    "parametros": "8 pasos, cfg 1, res_multistep/simple, denoise 1, shift 3 (ModelSamplingAuraFlow), valores de la plantilla oficial. Lados múltiplo de 16 (768x1344 en 9:16, ~1 MP; la plantilla trae 1024x1024). Sin prompt negativo: la plantilla usa ConditioningZeroOut del positivo y con cfg 1 el negativo no influye, así que «prompt_negativo» se ignora en este flujo.",
+    "vram_aproximada": "~16 GB según docs.comfy.org (modelo 12,3 GB bf16 + codificador 8 GB, que ComfyUI descarga de la GPU al terminar de codificar). Va sobrado en 24 GB o más.",
+    "licencia": "Z-Image: Apache 2.0 (Tongyi-MAI).",
+    "_TODO": [
+      "Medir en la primera corrida los segundos de GPU por imagen (docs.comfy.org habla de menos de 1 s en H800 sin contar la carga del modelo).",
+      "Si hace falta ahorrar VRAM, el mismo repo trae qwen_3_4b_fp8_mixed.safetensors (5,6 GB) como codificador."
+    ]
+  },
+  "1": {"class_type": "UNETLoader", "inputs": {"unet_name": "z_image_turbo_bf16.safetensors", "weight_dtype": "default"}},
+  "2": {"class_type": "ModelSamplingAuraFlow", "inputs": {"model": ["1", 0], "shift": 3.0}},
+  "3": {"class_type": "CLIPLoader", "inputs": {"clip_name": "qwen_3_4b.safetensors", "type": "lumina2", "device": "default"}},
+  "4": {"class_type": "CLIPTextEncode", "_meta": {"title": "Prompt"}, "inputs": {"clip": ["3", 0], "text": "{{PROMPT}}"}},
+  "5": {"class_type": "ConditioningZeroOut", "_meta": {"title": "Negativo vacío (cfg 1)"}, "inputs": {"conditioning": ["4", 0]}},
+  "6": {"class_type": "VAELoader", "inputs": {"vae_name": "ae.safetensors"}},
+  "7": {"class_type": "EmptySD3LatentImage", "inputs": {"width": "{{ANCHO}}", "height": "{{ALTO}}", "batch_size": 1}},
+  "8": {"class_type": "KSampler", "inputs": {"model": ["2", 0], "seed": "{{SEMILLA}}", "steps": 8, "cfg": 1.0, "sampler_name": "res_multistep", "scheduler": "simple", "positive": ["4", 0], "negative": ["5", 0], "latent_image": ["7", 0], "denoise": 1.0}},
+  "9": {"class_type": "VAEDecode", "inputs": {"samples": ["8", 0], "vae": ["6", 0]}},
+  "10": {"class_type": "SaveImage", "inputs": {"images": ["9", 0], "filename_prefix": "{{PREFIJO_SALIDA}}"}}
+}

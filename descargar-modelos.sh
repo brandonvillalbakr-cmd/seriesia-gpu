@@ -6,18 +6,18 @@
 #
 # Uso:
 #   export HF_TOKEN=...           # token de lectura de Hugging Face (no se imprime)
-#   ./descargar-modelos.sh todo   # o: wan22 | ltx25 | h3
+#   ./descargar-modelos.sh todo   # o: wan22 | ltx25 | h3 | imagen
 #
 # Variables opcionales:
 #   VOLUMEN=/workspace            # raíz del volumen (por defecto /workspace o /runpod-volume)
 #
-# Nombres y rutas verificados el 7/11/2026 con la API de Hugging Face
-# (ver el "_meta" de cada archivo en flujos/).
+# Nombres y rutas verificados el 7/11/2026 (video) y el 8/11/2026 (imagen) con la
+# API de Hugging Face (ver el "_meta" de cada archivo en flujos/).
 set -euo pipefail
 
 OPCION="${1:-}"
-if [[ -z "$OPCION" || ! "$OPCION" =~ ^(wan22|ltx25|h3|todo)$ ]]; then
-  echo "Uso: $0 wan22 | ltx25 | h3 | todo" >&2
+if [[ -z "$OPCION" || ! "$OPCION" =~ ^(wan22|ltx25|h3|imagen|todo)$ ]]; then
+  echo "Uso: $0 wan22 | ltx25 | h3 | imagen | todo" >&2
   exit 64
 fi
 
@@ -123,11 +123,24 @@ bajar_h3() {
   bajar Comfy-Org/MiniMax-H3 vae/minimax_h3_audio_vae_fp32.safetensors vae
 }
 
+bajar_imagen() {
+  echo "== Imagen: Z-Image Turbo + Qwen-Image-Edit 2511 (fp8mixed) — Apache 2.0, ~51 GB =="
+  # Comfy-Org renombró estos repos (z_image_turbo → Z-Image-Turbo, Qwen-Image_ComfyUI → Qwen-Image,
+  # Qwen-Image-Edit_ComfyUI → Qwen-Image-Edit); se usan los nombres nuevos para no depender de la redirección.
+  bajar Comfy-Org/Z-Image-Turbo split_files/diffusion_models/z_image_turbo_bf16.safetensors diffusion_models
+  bajar Comfy-Org/Z-Image-Turbo split_files/text_encoders/qwen_3_4b.safetensors text_encoders
+  bajar Comfy-Org/Z-Image-Turbo split_files/vae/ae.safetensors vae
+  bajar Comfy-Org/Qwen-Image-Edit split_files/diffusion_models/qwen_image_edit_2511_fp8mixed.safetensors diffusion_models
+  bajar Comfy-Org/Qwen-Image split_files/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors text_encoders
+  bajar Comfy-Org/Qwen-Image split_files/vae/qwen_image_vae.safetensors vae
+}
+
 case "$OPCION" in
-  wan22) bajar_wan22 ;;
-  ltx25) bajar_ltx25 ;;
-  h3)    bajar_h3 ;;
-  todo)  bajar_wan22; bajar_ltx25; bajar_h3 ;;
+  wan22)  bajar_wan22 ;;
+  ltx25)  bajar_ltx25 ;;
+  h3)     bajar_h3 ;;
+  imagen) bajar_imagen ;;
+  todo)   bajar_wan22; bajar_ltx25; bajar_h3; bajar_imagen ;;
 esac
 
 rm -rf "$TEMPORAL"

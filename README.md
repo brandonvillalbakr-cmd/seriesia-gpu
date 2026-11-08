@@ -1,21 +1,23 @@
 # Trabajador GPU de Series IA (RunPod Serverless + ComfyUI)
 
-Esta carpeta arma la imagen Docker que genera video con modelos abiertos en una GPU alquilada de RunPod. La app la llama con el proveedor `servidor-propio` (ver `docs/10-SERVIDOR-GPU-PROPIO.md`, secciones 5 y 8).
+Esta carpeta arma la imagen Docker que genera video (e imágenes fijas) con modelos abiertos en una GPU alquilada de RunPod. La app la llama con el proveedor `servidor-propio` (ver `docs/10-SERVIDOR-GPU-PROPIO.md`, secciones 5 y 8).
 
 | Archivo | Para qué sirve |
 |---|---|
 | `Dockerfile` | Imagen para RunPod Serverless: `runpod/worker-comfyui:5.10.0-base` + ComfyUI v0.44.2 + nuestro handler |
-| `handler.py` | Recibe el pedido de la app, arma el flujo, lo corre en ComfyUI y devuelve el MP4 |
-| `flujos/*.json` | Los 4 flujos de ComfyUI (formato API) con marcadores `{{…}}`; cada uno trae `_meta` con fuentes, modelos, VRAM y TODO |
+| `handler.py` | Recibe el pedido de la app, arma el flujo, lo corre en ComfyUI y devuelve el MP4 (o el PNG en los flujos de imagen) |
+| `flujos/*.json` | Los 6 flujos de ComfyUI (4 de video y 2 de imagen) (formato API) con marcadores `{{…}}`; cada uno trae `_meta` con fuentes, modelos, VRAM y TODO |
 | `extra_model_paths.yaml` | Le dice a ComfyUI que los modelos están en el volumen de red (`/runpod-volume/models/…`) |
 | `descargar-modelos.sh` | Baja los modelos de Hugging Face al volumen de red (se corre una vez en un pod temporal) |
-| `pruebas/` | Pruebas sin GPU (`test_handler.py`) y un pedido de ejemplo para `curl` (`entrada-ejemplo.json`) |
+| `pruebas/` | Pruebas sin GPU (`test_handler.py`) y pedidos de ejemplo para `curl` (`entrada-ejemplo.json` de video, `entrada-ejemplo-imagen.json` de imagen) |
 
 > Los rótulos de botones van «entre comillas» tal como aparecen en la documentación oficial que se cita al lado. Donde no pude confirmarlo, lo digo.
 
 ---
 
-## Los 4 flujos
+## Los flujos
+
+### Video (4)
 
 | `flujo` | Modelo | Necesita | Audio | fps | Frames | Tamaño 9:16 real | Modelos en el volumen |
 |---|---|---|---|---|---|---|---|
@@ -24,9 +26,21 @@ Esta carpeta arma la imagen Docker que genera video con modelos abiertos en una 
 | `wan22-i2v` | Wan 2.2 A14B + LoRA LightX2V 4 pasos (fp8) | `imagen_inicial` | No | 16 | 4n+1 (81 = 5 s) | 720×1280 | ~38 GB |
 | `wan22-ti2v-5b` | Wan 2.2 TI2V 5B (fp16) | Nada (`imagen_inicial` opcional) | No | **24** (así viene la plantilla oficial del 5B) | 4n+1 (121 = 5 s) | **704**×1280 (múltiplo de 32) | ~18 GB (comparte el umt5) |
 
-Total para los 4: **~130 GB**. Con el volumen de 200 GB sobra espacio.
+Total para los 4 de video: **~130 GB**.
 
-Todos usan **solo nodos nativos de ComfyUI** (las plantillas oficiales de Comfy-Org ya no necesitan nodos personalizados para H3, LTX-2.5 ni Wan 2.2). La imagen igual instala VideoHelperSuite y KJNodes con commit fijo, por si luego se usan.
+### Imagen (2)
+
+| `flujo` | Modelo | Necesita | Pasos | Tamaño 9:16 por defecto | Modelos en el volumen |
+|---|---|---|---|---|---|
+| `zimage-t2i` | Z-Image Turbo 6B (bf16) | Solo `prompt` | 8, cfg 1 (`res_multistep`) | 768×1344 (múltiplo de 16) | ~20,7 GB |
+| `qwen-edit-ref` | Qwen-Image-Edit 2511 (fp8mixed) | `referencias` (1–3) **o** `imagen_inicial` | 40, cfg 4 (`euler`) | 768×1344 (múltiplo de 16) | ~30,2 GB |
+
+Total para los 2 de imagen: **~51 GB**. **Los 6 flujos suman ~181 GB**: caben en el volumen de 200 GB, pero queda poco margen (agrándalo si se suman más modelos; se puede agrandar, no achicar).
+
+- `zimage-t2i`: plantilla oficial `image_z_image_turbo` tal cual (UNETLoader → ModelSamplingAuraFlow shift 3 → KSampler; CLIPLoader tipo `lumina2` con `qwen_3_4b`; VAE `ae`). **Ignora `prompt_negativo`**: la plantilla usa cfg 1 con el negativo en cero (ConditioningZeroOut), así que un negativo no cambiaría nada.
+- `qwen-edit-ref`: plantilla oficial `image_qwen_image_edit_2511` con sus valores por defecto (sin la LoRA Lightning). Las referencias entran en `image1..image3` de los dos `TextEncodeQwenImageEditPlus` (positivo y negativo). **En el prompt, nómbralas «Picture 1», «Picture 2», «Picture 3»** en el orden de `referencias` (así las rotula el nodo). Única diferencia con la plantilla: el latente es `EmptySD3LatentImage` con el `ancho`/`alto` del pedido (la plantilla toma el tamaño de la imagen 1), para que salga 9:16 aunque las hojas tengan otra forma.
+
+Todos usan **solo nodos nativos de ComfyUI** (las plantillas oficiales de Comfy-Org ya no necesitan nodos personalizados para H3, LTX-2.5, Wan 2.2, Z-Image ni Qwen-Image-Edit). La imagen igual instala VideoHelperSuite y KJNodes con commit fijo, por si luego se usan.
 
 ---
 
@@ -37,6 +51,8 @@ Todos usan **solo nodos nativos de ComfyUI** (las plantillas oficiales de Comfy-
 Entrada: `flujo`, `prompt`, `prompt_negativo?`, `duracion_seg`, `aspecto`, `ancho`, `alto`, `fps?`, `semilla?`, `imagen_inicial?`, `referencias?`, `audio_referencia?`, `generar_audio`, `salida?` (`url_subida`, `url_publica?`). Los archivos van como `{"nombre","mime","base64"}` o `{"nombre","mime","url"}`.
 
 Salida: `{"video_base64"}` o `{"video_url"}` + `mime`, `flujo`, `ancho`, `alto`, `duracion_seg`, `fps`, `segundos_gpu`. Además devuelve `frames` y `semilla` (campos extra, se pueden ignorar). En error: `{"error": "mensaje en español"}` → RunPod marca el trabajo `FAILED`.
+
+**Flujos de imagen** (`zimage-t2i`, `qwen-edit-ref`): misma entrada, pero **sin** `duracion_seg`, `fps`, `audio_referencia` ni `generar_audio` (si llegan, se ignoran). Usan `flujo`, `prompt`, `prompt_negativo?` (solo Qwen), `ancho?`/`alto?` (por defecto 768×1344), `semilla?`, `referencias?` (1–3, solo Qwen; si no hay, la `imagen_inicial` hace de referencia 1) y `salida?`. Salida: `{"imagen_base64"}` o `{"imagen_url"}` + `mime` (`image/png`), `flujo`, `ancho`, `alto`, `semilla`, `segundos_gpu`. Con `salida.url_subida` el PUT va con `Content-Type: image/png`.
 
 Cosas que el adaptador TypeScript debe saber:
 - **`ancho`/`alto`/`duracion_seg`/`fps` de la respuesta son los reales** (p. ej. LTX devuelve 704×1280 y H3 6 s → 158 frames = 6,58 s). Usa esos para el montaje.
@@ -87,9 +103,9 @@ Cosas que el adaptador TypeScript debe saber:
    cd /workspace
    read -rs HF_TOKEN && export HF_TOKEN     # pega el token de Hugging Face y pulsa Enter
    chmod +x descargar-modelos.sh
-   ./descargar-modelos.sh todo              # o solo: wan22 | ltx25 | h3
+   ./descargar-modelos.sh todo              # o solo: wan22 | ltx25 | h3 | imagen
    ```
-   Tarda según la red del data center (son ~130 GB). Si ya bajó algo, lo salta. Si falta aceptar una licencia, se detiene con «Acepta la licencia en https://huggingface.co/…». Al final muestra el espacio usado.
+   Tarda según la red del data center (son ~181 GB con `todo`; ~51 GB solo `imagen`). Si ya bajó algo, lo salta. Si falta aceptar una licencia, se detiene con «Acepta la licencia en https://huggingface.co/…». Al final muestra el espacio usado.
 9. **Apaga y borra el pod** cuando termine (el volumen y los modelos se quedan). En el pod el volumen se ve en `/workspace`; en serverless, en `/runpod-volume`.
 
 ### (e) Construir y subir la imagen Docker
@@ -154,7 +170,12 @@ curl -s -X POST "https://api.runpod.ai/v2/$RUNPOD_ENDPOINT_ID/runsync" \
 # Guardar el MP4 que vino en base64
 python -c "import json,base64; r=json.load(open('respuesta.json')); o=r.get('output',{}); print(o.get('error') or {k:v for k,v in o.items() if k!='video_base64'}); open('prueba.mp4','wb').write(base64.b64decode(o['video_base64'])) if 'video_base64' in o else None"
 ```
-`entrada-ejemplo.json` usa `wan22-ti2v-5b` (el más liviano: no necesita imagen ni licencia). El primer trabajo tarda más (arranque en frío + carga del modelo desde el volumen).
+`entrada-ejemplo.json` usa `wan22-ti2v-5b` (el más liviano: no necesita imagen ni licencia).
+
+Para una imagen, cambia el archivo por `entrada-ejemplo-imagen.json` (`zimage-t2i`) y guarda el PNG así:
+```bash
+python -c "import json,base64; r=json.load(open('respuesta.json')); o=r.get('output',{}); print(o.get('error') or {k:v for k,v in o.items() if k!='imagen_base64'}); open('prueba.png','wb').write(base64.b64decode(o['imagen_base64'])) if 'imagen_base64' in o else None"
+``` El primer trabajo tarda más (arranque en frío + carga del modelo desde el volumen).
 
 ### (i) Costos de la prueba de 1 día y licencias
 De `docs/10-SERVIDOR-GPU-PROPIO.md`, sección 8:
@@ -172,14 +193,14 @@ RunPod cobra también **la carga del modelo** en cada arranque en frío ([factur
 
 > **⚠ Licencia de MiniMax H3 (sección 1.4 del documento 10).** Los videos hechos con H3 **no se pueden usar ni mostrar en EE. UU., la Unión Europea, el Reino Unido ni Corea del Sur**. Hay que poner **«MiniMax H3»** visible en la app, avisar que es contenido de IA y, por encima de US$20 M de ingresos al año, pedir permiso a MiniMax (api@minimax.io). Docs.comfy.org agrega que el uso comercial de salidas locales requiere licencia comercial de MiniMax. **Usa `h3-ref` solo para series de Latinoamérica** (o con permiso escrito) y que lo revise un abogado.
 >
-> LTX-2.5: gratis para empresas con menos de US$10 M de ingresos (licencia comunitaria de Lightricks). Wan 2.2: Apache 2.0.
+> LTX-2.5: gratis para empresas con menos de US$10 M de ingresos (licencia comunitaria de Lightricks). Wan 2.2, Z-Image y Qwen-Image-Edit 2511: Apache 2.0.
 
 ---
 
 ## Para el desarrollador
 
-- **Pruebas sin GPU:** `python -m unittest discover -s E:/series-ia/gpu/pruebas -v` (42 pruebas: frames, dimensiones, marcadores, validación, armado de los 4 flujos con todas las combinaciones, y el handler completo con HTTP simulado: base64, PUT, URL pública, nodo faltante, modelo faltante, OOM, rechazo 400, tiempo agotado). También `python -m py_compile handler.py`.
-- **Cómo arma el flujo:** `armar_prompt_api` quita los nodos con `"_si"` que no se cumple (`"imagen_inicial"`, `"!audio_referencia"`, listas = «cualquiera»), resuelve entradas `{"_si", "entonces", "si_no"}`, reemplaza `{{MARCADOR}}` conservando el tipo, agrega un `LoadImage` por referencia (H3, entrada `ref_images.ref_image_N`), borra enlaces a nodos quitados y poda lo que no llega a `SaveVideo`.
+- **Pruebas sin GPU:** `python -m unittest discover -s E:/series-ia/gpu/pruebas -v` (55 pruebas: frames, dimensiones, marcadores, validación, armado de los 6 flujos con todas las combinaciones, referencias de Qwen en positivo y negativo, y el handler completo con HTTP simulado para video e imagen: base64, PUT, URL pública, nodo faltante, modelo faltante, OOM, rechazo 400, tiempo agotado, salida sin imagen). También `python -m py_compile handler.py`.
+- **Cómo arma el flujo:** `armar_prompt_api` quita los nodos con `"_si"` que no se cumple (`"imagen_inicial"`, `"!audio_referencia"`, listas = «cualquiera»), resuelve entradas `{"_si", "entonces", "si_no"}`, reemplaza `{{MARCADOR}}` conservando el tipo, agrega un `LoadImage` por referencia según `_meta.referencias` (H3: nodo 8, `ref_images.ref_image_0..8`; Qwen: nodos 6 y 7, `image1..3`), borra enlaces a nodos quitados y poda lo que no llega a `SaveVideo`/`SaveImage`. Los flujos con `"tipo": "imagen"` en `FLUJOS` no calculan frames y devuelven `imagen_*`.
 - **Antes de mandar a ComfyUI** consulta `/object_info` y avisa qué `class_type` faltan o qué archivo de modelo no está (con su carpeta).
 - **Variables:** `TIEMPO_MAX_SEG` (1200), `COMFY_ESPERA_ARRANQUE_SEG` (600), `INTERVALO_SONDEO_SEG` (2), `MAX_MB_ARCHIVO_ENTRADA` (60), `COMFY_HOST` (127.0.0.1:8188).
 - **Modelos:** `/runpod-volume/models/{diffusion_models,text_encoders,vae,loras,latent_upscale_models}/` (ver `extra_model_paths.yaml`).
@@ -192,3 +213,4 @@ RunPod cobra también **la carga del modelo** en cada arranque en frío ([factur
 5. Rendimiento real de int8/nvfp4 (comfy-kitchen) en H100 y A100; VRAM y RAM reales; segundos de GPU por segundo de video.
 6. Límite de tamaño de la **salida** de RunPod con `video_base64` (la documentación da 10/20 MB para la entrada). Para clips de más de ~5 MB usa `salida.url_subida`.
 7. Rótulos de la consola que no están en la documentación: botón de recarga, nombre de la plantilla del pod, dónde se muestra el «Endpoint ID».
+8. Imagen: segundos de GPU por imagen de `zimage-t2i` y `qwen-edit-ref` (40 pasos con cfg 4 en un modelo de 20B puede pasar del minuto; la plantilla sugiere 20 pasos y existe la LoRA Lightning de 4 pasos, que hoy no está en el volumen). En Qwen, comprobar si el prompt respeta más «Picture 1» o «image 1» y si hace falta el `FluxKontextImageScale` de la plantilla sobre la imagen 1.

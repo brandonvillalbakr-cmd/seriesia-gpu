@@ -1,0 +1,9 @@
+{
+  "input": {
+    "flujo": "zimage-t2i",
+    "prompt": "Vertical cinematic photo of a quiet city street at dawn, soft mist, a woman in a red coat walking toward the camera, natural light, 35mm film look.",
+    "ancho": 768,
+    "alto": 1344,
+    "semilla": 12345
+  }
+}

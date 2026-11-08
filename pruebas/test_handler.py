@@ -25,7 +25,9 @@ PNG_1PX = base64.b64encode(
 ).decode()
 WAV = base64.b64encode(b"RIFF\x24\x00\x00\x00WAVEfmt ").decode()
 MP4 = b"\x00\x00\x00\x18ftypmp42video-falso"
-FLUJOS = ("h3-ref", "ltx25-i2v", "wan22-i2v", "wan22-ti2v-5b")
+FLUJOS_VIDEO = ("h3-ref", "ltx25-i2v", "wan22-i2v", "wan22-ti2v-5b")
+FLUJOS_IMAGEN = ("zimage-t2i", "qwen-edit-ref")
+FLUJOS = FLUJOS_VIDEO + FLUJOS_IMAGEN
 
 
 def imagen(nombre="foto.png"):
@@ -92,13 +94,20 @@ class ComfyFalso:
             self.interrumpido = True
             return 200, b""
         if "/view?" in url:
-            return 200, MP4
+            return 200, (base64.b64decode(PNG_1PX) if ".png" in url else MP4)
         if metodo == "PUT":
             self.puts.append((url, datos, cabeceras))
             return self.estado_put, b""
         if url.startswith("https://ejemplo.com/"):
             return 200, base64.b64decode(PNG_1PX)
         raise AssertionError(f"Llamada HTTP no esperada: {metodo} {url}")
+
+
+def historial_imagen(archivo="x_00001_.png", tipo="output"):
+    return {
+        "status": {"status_str": "success", "completed": True, "messages": []},
+        "outputs": {"13": {"images": [{"filename": archivo, "subfolder": "seriesia", "type": tipo}]}},
+    }
 
 
 def historial_ok(clave="images", archivo="seriesia/x_00001.mp4"):
@@ -273,6 +282,42 @@ class PruebasValidacion(unittest.TestCase):
     def test_wan_no_genera_audio(self):
         self.assertFalse(h.validar_entrada(self.base(generar_audio=True))["generar_audio"])
 
+    def test_imagen_no_pide_duracion_fps_ni_audio(self):
+        d = h.validar_entrada({"flujo": "zimage-t2i", "prompt": "Una calle de noche"})
+        self.assertEqual(d["tipo"], "imagen")
+        self.assertEqual((d["ancho"], d["alto"]), (768, 1344))  # 9:16 por defecto
+        self.assertIsNone(d["duracion_seg"])
+        self.assertIsNone(d["fps"])
+        self.assertFalse(d["generar_audio"])
+        # si llegan campos de video (incluso con tipos raros) se ignoran
+        d = h.validar_entrada({"flujo": "zimage-t2i", "prompt": "x", "duracion_seg": "5", "fps": 999,
+                               "generar_audio": "si", "imagen_inicial": imagen(),
+                               "audio_referencia": {"nombre": "v.wav", "mime": "audio/wav", "base64": WAV}})
+        self.assertIsNone(d["imagen_inicial"])
+        self.assertIsNone(d["audio_referencia"])
+        self.assertEqual(d["referencias"], [])
+
+    def test_imagen_respeta_tamano_y_semilla(self):
+        d = h.validar_entrada({"flujo": "zimage-t2i", "prompt": "x", "ancho": 1080, "alto": 1920,
+                               "semilla": 7, "prompt_negativo": "borroso"})
+        self.assertEqual((d["ancho"], d["alto"], d["semilla"]), (1072, 1920, 7))  # múltiplo de 16; empate baja
+        self.assertEqual(d["prompt_negativo"], "borroso")
+        self.assertEqual(h.validar_entrada({"flujo": "qwen-edit-ref", "prompt": "x", "ancho": 720, "alto": 1280,
+                                            "referencias": [imagen()]})["ancho"], 720)
+
+    def test_qwen_referencias(self):
+        e = {"flujo": "qwen-edit-ref", "prompt": "Picture 1 en el café de Picture 2"}
+        with self.assertRaisesRegex(h.ErrorTrabajo, "referencias"):
+            h.validar_entrada(e)
+        with self.assertRaisesRegex(h.ErrorTrabajo, "máximo 3"):
+            h.validar_entrada(dict(e, referencias=[imagen()] * 4))
+        d = h.validar_entrada(dict(e, imagen_inicial=imagen("sola.png")))
+        self.assertEqual([r["nombre"] for r in d["referencias"]], ["sola.png"])
+        self.assertIsNone(d["imagen_inicial"])  # pasó a ser la referencia 1
+        d = h.validar_entrada(dict(e, referencias=[imagen("a.png"), imagen("b.png")], imagen_inicial=imagen("c.png")))
+        self.assertEqual([r["nombre"] for r in d["referencias"]], ["a.png", "b.png"])
+        self.assertIsNone(d["imagen_inicial"])
+
 
 # ---------------------------------------------------------------------------
 class PruebasFlujos(unittest.TestCase):
@@ -280,7 +325,7 @@ class PruebasFlujos(unittest.TestCase):
                "ALTO_MEDIO": 640, "FRAMES": 121, "FPS": 24, "DURACION_SEG": 5.0417, "SEMILLA": 1,
                "IMAGEN_INICIAL": "img.png", "AUDIO_REFERENCIA": "voz.wav", "PREFIJO_SALIDA": "seriesia/t"}
 
-    def revisar_grafo(self, prompt):
+    def revisar_grafo(self, prompt, es_imagen=False):
         texto = json.dumps(prompt, ensure_ascii=False)
         self.assertNotIn("{{", texto)
         self.assertNotIn('"_si"', texto)
@@ -290,7 +335,8 @@ class PruebasFlujos(unittest.TestCase):
             for k, v in nodo["inputs"].items():
                 if isinstance(v, list) and len(v) == 2 and isinstance(v[0], str):
                     self.assertIn(v[0], prompt, f"{nid}.{k} apunta a un nodo inexistente")
-        self.assertTrue(any(n["class_type"] == "SaveVideo" for n in prompt.values()))
+        salida = "SaveImage" if es_imagen else "SaveVideo"
+        self.assertTrue(any(n["class_type"] == salida for n in prompt.values()))
 
     def test_todos_los_flujos_tienen_meta(self):
         for nombre in FLUJOS:
@@ -306,11 +352,72 @@ class PruebasFlujos(unittest.TestCase):
             for img in (True, False):
                 for aud in (True, False):
                     for gen in (True, False):
+                        con_refs = nombre in ("h3-ref", "qwen-edit-ref")
                         b = {"imagen_inicial": img, "audio_referencia": aud, "generar_audio": gen,
-                             "referencias": nombre == "h3-ref"}
-                        refs = ["r1.png", "r2.png"] if nombre == "h3-ref" else []
+                             "referencias": con_refs}
+                        refs = ["r1.png", "r2.png"] if con_refs else []
                         with self.subTest(flujo=nombre, imagen=img, audio=aud, generar_audio=gen):
-                            self.revisar_grafo(h.armar_prompt_api(cargar(nombre), self.VALORES, b, refs))
+                            self.revisar_grafo(h.armar_prompt_api(cargar(nombre), self.VALORES, b, refs),
+                                               es_imagen=nombre in FLUJOS_IMAGEN)
+
+    def test_flujos_de_imagen_meta(self):
+        for nombre in FLUJOS_IMAGEN:
+            meta = cargar(nombre)["_meta"]
+            self.assertEqual(meta["tipo"], "imagen")
+            self.assertTrue(h.es_flujo_de_imagen(nombre))
+            self.assertTrue(all("http" in f for f in meta["fuente_verificada"]))
+            clases = {n["class_type"] for k, n in cargar(nombre).items() if k != "_meta"}
+            self.assertLessEqual(clases, set(meta["nodos_requeridos"]) | {"LoadImage"})
+        self.assertFalse(h.es_flujo_de_imagen("wan22-i2v"))
+
+    def test_zimage_grafo(self):
+        p = h.armar_prompt_api(cargar("zimage-t2i"), self.VALORES, {}, [])
+        self.assertEqual(p["3"]["inputs"]["type"], "lumina2")
+        self.assertEqual(p["7"]["class_type"], "EmptySD3LatentImage")
+        self.assertEqual((p["7"]["inputs"]["width"], p["7"]["inputs"]["height"]), (704, 1280))
+        k = p["8"]["inputs"]
+        self.assertEqual((k["steps"], k["cfg"], k["sampler_name"], k["scheduler"], k["seed"]),
+                         (8, 1.0, "res_multistep", "simple", 1))
+        self.assertEqual(k["negative"], ["5", 0])
+        self.assertEqual(p["2"]["inputs"]["shift"], 3.0)
+        self.assertEqual(p["10"]["inputs"]["filename_prefix"], "seriesia/t")
+        with self.assertRaises(h.ErrorTrabajo):  # no acepta referencias
+            h.armar_prompt_api(cargar("zimage-t2i"), self.VALORES, {}, ["x.png"])
+
+    def test_qwen_referencias_van_a_positivo_y_negativo(self):
+        p = h.armar_prompt_api(cargar("qwen-edit-ref"), self.VALORES, {"referencias": True},
+                               ["a.png", "b.png", "c.png"])
+        for nid in ("6", "7"):
+            self.assertEqual(p[nid]["class_type"], "TextEncodeQwenImageEditPlus")
+            self.assertEqual(p[nid]["inputs"]["image1"], ["ref_1", 0])
+            self.assertEqual(p[nid]["inputs"]["image2"], ["ref_2", 0])
+            self.assertEqual(p[nid]["inputs"]["image3"], ["ref_3", 0])
+            self.assertNotIn("image0", p[nid]["inputs"])
+            self.assertEqual(p[nid]["inputs"]["vae"], ["5", 0])
+        self.assertEqual(p["ref_3"]["inputs"]["image"], "c.png")
+        self.assertEqual(p["6"]["inputs"]["prompt"], "p")
+        self.assertEqual(p["7"]["inputs"]["prompt"], "n")
+        self.assertEqual(p["4"]["inputs"]["type"], "qwen_image")
+        k = p["11"]["inputs"]
+        self.assertEqual((k["steps"], k["cfg"], k["sampler_name"]), (40, 4.0, "euler"))
+        self.assertEqual((k["positive"], k["negative"], k["model"]), (["8", 0], ["9", 0], ["3", 0]))
+        # con una sola referencia solo se conecta image1
+        p = h.armar_prompt_api(cargar("qwen-edit-ref"), self.VALORES, {"referencias": True}, ["a.png"])
+        self.assertEqual(p["6"]["inputs"]["image1"], ["ref_1", 0])
+        self.assertNotIn("image2", p["6"]["inputs"])
+        self.assertNotIn("ref_2", p)
+        with self.assertRaisesRegex(h.ErrorTrabajo, "máximo 3"):
+            h.armar_prompt_api(cargar("qwen-edit-ref"), self.VALORES, {}, ["a", "b", "c", "d"])
+
+    def test_extraer_imagenes(self):
+        self.assertEqual(len(h.extraer_imagenes(historial_imagen())), 1)
+        self.assertEqual(h.extraer_imagenes(historial_ok()), [])  # un .mp4 no es imagen
+        self.assertEqual(h.extraer_videos(historial_imagen()), [])  # un .png no es video
+        mixto = {"outputs": {"1": {"images": [{"filename": "p.png", "type": "temp"}]},
+                             "2": {"images": [{"filename": "s.png", "type": "output"}]}}}
+        self.assertEqual([i["filename"] for i in h.extraer_imagenes(mixto)], ["s.png"])
+        self.assertEqual(h.mime_de_imagen("a.webp"), "image/webp")
+        self.assertEqual(h.mime_de_imagen("a.png"), "image/png")
 
     def test_h3_referencias_y_guia(self):
         b = {"imagen_inicial": False, "audio_referencia": True, "generar_audio": True, "referencias": True}
@@ -480,15 +587,91 @@ class PruebasHandlerCompleto(BaseConCarpetas):
                         ComfyFalso(historial=historial_ok(), estado_put=403))
         self.assertIn("HTTP 403", r["error"])
 
+    def correr_imagen(self, entrada, falso, archivo="x_00001_.png"):
+        os.makedirs(os.path.join(self.tmp, "output", "seriesia"), exist_ok=True)
+        with open(os.path.join(self.tmp, "output", "seriesia", archivo), "wb") as f:
+            f.write(base64.b64decode(PNG_1PX))
+        with mock.patch.object(h, "http", falso):
+            return h.handler({"id": "job-1", "input": entrada})
+
+    def test_zimage_base64(self):
+        falso = ComfyFalso(historial=historial_imagen())
+        r = self.correr_imagen({"flujo": "zimage-t2i", "prompt": "Retrato de una mujer en la lluvia",
+                                "semilla": 42, "aspecto": "9:16"}, falso)
+        self.assertNotIn("error", r, r.get("error"))
+        self.assertEqual(base64.b64decode(r["imagen_base64"]), base64.b64decode(PNG_1PX))
+        self.assertEqual((r["mime"], r["flujo"], r["ancho"], r["alto"], r["semilla"]),
+                         ("image/png", "zimage-t2i", 768, 1344, 42))
+        self.assertIsInstance(r["segundos_gpu"], float)
+        for clave in ("video_base64", "video_url", "duracion_seg", "fps", "frames"):
+            self.assertNotIn(clave, r)
+        p = falso.prompt_enviado
+        self.assertEqual(p["8"]["inputs"]["seed"], 42)
+        self.assertEqual(p["7"]["inputs"]["height"], 1344)
+        self.assertEqual(p["4"]["inputs"]["text"], "Retrato de una mujer en la lluvia")
+        self.assertEqual(os.listdir(os.path.join(self.tmp, "input")) if os.path.isdir(
+            os.path.join(self.tmp, "input")) else [], [])
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "output", "seriesia", "x_00001_.png")))
+
+    def test_qwen_con_subida_put_y_referencia_por_url(self):
+        falso = ComfyFalso(historial=historial_imagen())
+        r = self.correr_imagen({"flujo": "qwen-edit-ref", "prompt": "La mujer de Picture 1 en el bar de Picture 2",
+                                "ancho": 768, "alto": 1344, "semilla": 5,
+                                "referencias": [imagen("personaje.png"),
+                                                {"nombre": "bar.png", "mime": "image/png",
+                                                 "url": "https://ejemplo.com/bar.png"}],
+                                "salida": {"url_subida": "https://bucket.ejemplo.com/i.png?firma=1"}}, falso)
+        self.assertNotIn("error", r, r.get("error"))
+        self.assertEqual(r["imagen_url"], "https://bucket.ejemplo.com/i.png")
+        self.assertNotIn("imagen_base64", r)
+        self.assertEqual(falso.puts[0][2]["Content-Type"], "image/png")
+        p = falso.prompt_enviado
+        self.assertTrue(p["ref_1"]["inputs"]["image"].endswith("personaje.png"))
+        self.assertTrue(p["ref_2"]["inputs"]["image"].endswith("bar.png"))
+        self.assertEqual(p["7"]["inputs"]["image2"], ["ref_2", 0])
+        self.assertEqual(p["7"]["inputs"]["prompt"], "")  # negativo por defecto de la plantilla
+        self.assertEqual(p["11"]["inputs"]["seed"], 5)
+        self.assertEqual(os.listdir(os.path.join(self.tmp, "input")), [])
+
+    def test_qwen_negativo_e_imagen_inicial_como_referencia(self):
+        falso = ComfyFalso(historial=historial_imagen(archivo="otra.png"))  # no está en disco: va por /view
+        r = self.correr_imagen({"flujo": "qwen-edit-ref", "prompt": "x", "prompt_negativo": "borroso",
+                                "imagen_inicial": imagen("hoja.png")}, falso)
+        self.assertNotIn("error", r, r.get("error"))
+        self.assertEqual(base64.b64decode(r["imagen_base64"]), base64.b64decode(PNG_1PX))
+        p = falso.prompt_enviado
+        self.assertEqual(p["7"]["inputs"]["prompt"], "borroso")
+        self.assertTrue(p["ref_1"]["inputs"]["image"].endswith("hoja.png"))
+        self.assertNotIn("ref_2", p)
+
+    def test_imagen_sin_salida(self):
+        r = self.correr_imagen({"flujo": "zimage-t2i", "prompt": "x"}, ComfyFalso(historial=historial_ok()))
+        self.assertIn("ninguna imagen", r["error"])
+
+    def test_imagen_nodo_faltante(self):
+        info = object_info_completo()
+        del info["TextEncodeQwenImageEditPlus"]
+        r = self.correr_imagen({"flujo": "qwen-edit-ref", "prompt": "x", "referencias": [imagen()]},
+                               ComfyFalso(object_info=info))
+        self.assertIn("TextEncodeQwenImageEditPlus", r["error"])
+        self.assertEqual(os.listdir(os.path.join(self.tmp, "input")), [])
+
+    def test_imagen_modelo_faltante(self):
+        info = object_info_completo()
+        info["CLIPLoader"]["input"]["required"]["clip_name"][0].remove("qwen_3_4b.safetensors")
+        r = self.correr_imagen({"flujo": "zimage-t2i", "prompt": "x"}, ComfyFalso(object_info=info))
+        self.assertIn("qwen_3_4b.safetensors (carpeta models/text_encoders/)", r["error"])
+
     def test_entrada_vacia(self):
         self.assertIn("error", h.handler({"id": "x"}))
         self.assertIn("error", h.handler(None))
 
     def test_entrada_ejemplo_es_valida(self):
-        with open(os.path.join(RAIZ, "pruebas", "entrada-ejemplo.json"), encoding="utf-8") as f:
-            ejemplo = json.load(f)
-        d = h.validar_entrada(ejemplo["input"])
-        self.assertEqual(d["flujo"], ejemplo["input"]["flujo"])
+        for archivo in ("entrada-ejemplo.json", "entrada-ejemplo-imagen.json"):
+            with open(os.path.join(RAIZ, "pruebas", archivo), encoding="utf-8") as f:
+                ejemplo = json.load(f)
+            d = h.validar_entrada(ejemplo["input"])
+            self.assertEqual(d["flujo"], ejemplo["input"]["flujo"])
 
 
 if __name__ == "__main__":

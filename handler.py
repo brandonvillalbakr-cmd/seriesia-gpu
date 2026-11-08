@@ -2,8 +2,8 @@
 
 Recibe el contrato fijo de la app (ver README.md, sección «Contrato»), arma el
 flujo de ComfyUI que corresponde (carpeta flujos/), lo manda al ComfyUI local que
-arranca la imagen base runpod/worker-comfyui y devuelve el MP4 (en base64 o
-subido con PUT a una URL prefirmada).
+arranca la imagen base runpod/worker-comfyui y devuelve el MP4 o, en los flujos
+de imagen, el PNG (en base64 o subido con PUT a una URL prefirmada).
 
 Solo usa la librería estándar de Python; `runpod` se importa únicamente al
 arrancar como trabajador, así las pruebas corren en cualquier PC sin GPU.
@@ -44,6 +44,7 @@ INTERVALO_SONDEO_SEG = float(os.environ.get("INTERVALO_SONDEO_SEG", "2"))
 MAX_MB_ARCHIVO_ENTRADA = float(os.environ.get("MAX_MB_ARCHIVO_ENTRADA", "60"))
 
 # Reglas de cada flujo. Fuentes en el "_meta" de cada JSON de flujos/.
+#  - tipo: "video" (por defecto) o "imagen" (no usan duracion_seg, fps ni audio)
 #  - regla_frames: "4n+1" (Wan), "8n+1" (LTX), "17k+5" (MiniMax H3, a 24 fps)
 #  - multiplo: múltiplo al que se redondean ancho y alto
 #  - fps_fijo: H3 solo trabaja a 24 fps (constante FPS=24 en nodes_minimax_h3.py)
@@ -74,16 +75,31 @@ FLUJOS: dict[str, dict] = {
         "requiere_imagen": False, "requiere_referencias": False, "max_referencias": 0,
         "usa_audio_referencia": False, "tiene_audio": False,
     },
+    # Flujos de imagen: latente de 16 canales con VAE /8 y parches de 2 → lados múltiplo de 16.
+    "zimage-t2i": {
+        "tipo": "imagen", "multiplo": 16, "dimensiones": (768, 1344),
+        "requiere_imagen": False, "requiere_referencias": False, "max_referencias": 0,
+    },
+    "qwen-edit-ref": {
+        "tipo": "imagen", "multiplo": 16, "dimensiones": (768, 1344),
+        "requiere_imagen": False, "requiere_referencias": True, "max_referencias": 3,
+    },
 }
+
+
+def es_flujo_de_imagen(flujo: str) -> bool:
+    return FLUJOS.get(flujo, {}).get("tipo") == "imagen"
+
 
 # Entradas de nodos cargadores cuyo valor es un archivo de modelo.
 ENTRADAS_DE_MODELO = (
     "unet_name", "clip_name", "clip_name1", "clip_name2", "vae_name",
     "lora_name", "model_name", "ckpt_name",
 )
-# class_type de nodos que producen video.
-NODOS_DE_SALIDA = ("SaveVideo", "VHS_VideoCombine", "SaveWEBM", "SaveAnimatedWEBP")
+# class_type de nodos que producen video o imagen.
+NODOS_DE_SALIDA = ("SaveVideo", "VHS_VideoCombine", "SaveWEBM", "SaveAnimatedWEBP", "SaveImage")
 EXTENSIONES_VIDEO = (".mp4", ".webm", ".mov", ".mkv")
+MIME_POR_EXTENSION_IMAGEN = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}
 EXT_POR_MIME = {
     "image/png": ".png", "image/jpeg": ".jpg", "image/jpg": ".jpg", "image/webp": ".webp",
     "audio/wav": ".wav", "audio/x-wav": ".wav", "audio/wave": ".wav", "audio/mpeg": ".mp3",
@@ -171,18 +187,23 @@ def validar_entrada(entrada) -> dict:
             f"Flujo desconocido «{flujo}». Usa uno de: {', '.join(sorted(FLUJOS))}."
         )
     reglas = FLUJOS[flujo]
+    es_imagen = es_flujo_de_imagen(flujo)
     prompt = entrada.get("prompt")
     if not isinstance(prompt, str) or not prompt.strip():
-        raise ErrorTrabajo("Falta el «prompt» (texto de la toma).")
+        raise ErrorTrabajo("Falta el «prompt» (texto de la imagen)." if es_imagen
+                           else "Falta el «prompt» (texto de la toma).")
     negativo = entrada.get("prompt_negativo")
     if negativo is not None and not isinstance(negativo, str):
         raise ErrorTrabajo("«prompt_negativo» tiene que ser texto.")
 
-    if "duracion_seg" not in entrada:
-        raise ErrorTrabajo("Falta «duracion_seg».")
-    duracion = _numero(entrada["duracion_seg"], "duracion_seg")
-    dmin, dmax = reglas["duracion"]
-    duracion = min(max(duracion, dmin), dmax)  # la app ya redondea; aquí solo se acota
+    # Los flujos de imagen no usan duración, fps ni audio (si llegan, se ignoran).
+    duracion = fps = None
+    if not es_imagen:
+        if "duracion_seg" not in entrada:
+            raise ErrorTrabajo("Falta «duracion_seg».")
+        duracion = _numero(entrada["duracion_seg"], "duracion_seg")
+        dmin, dmax = reglas["duracion"]
+        duracion = min(max(duracion, dmin), dmax)  # la app ya redondea; aquí solo se acota
 
     ancho_def, alto_def = reglas["dimensiones"]
     ancho = _numero(entrada.get("ancho", ancho_def), "ancho", entero=True)
@@ -190,11 +211,12 @@ def validar_entrada(entrada) -> dict:
     if not (64 <= ancho <= 4096 and 64 <= alto <= 4096):
         raise ErrorTrabajo("«ancho» y «alto» tienen que estar entre 64 y 4096 píxeles.")
 
-    fps = reglas["fps"]
-    if entrada.get("fps") is not None and not reglas["fps_fijo"]:
-        fps = _numero(entrada["fps"], "fps", entero=True)
-        if not 1 <= fps <= 60:
-            raise ErrorTrabajo("«fps» tiene que estar entre 1 y 60.")
+    if not es_imagen:
+        fps = reglas["fps"]
+        if entrada.get("fps") is not None and not reglas["fps_fijo"]:
+            fps = _numero(entrada["fps"], "fps", entero=True)
+            if not 1 <= fps <= 60:
+                raise ErrorTrabajo("«fps» tiene que estar entre 1 y 60.")
 
     semilla = entrada.get("semilla")
     if semilla is None:
@@ -232,13 +254,19 @@ def validar_entrada(entrada) -> dict:
             )
     else:
         referencias = []  # los demás flujos no usan referencias
-    if not reglas["usa_audio_referencia"]:
+    if es_imagen:
+        # Los flujos de imagen no tienen primer fotograma: en qwen-edit-ref la
+        # imagen_inicial ya pasó a ser la referencia 1; en zimage-t2i se ignora.
+        imagen = None
+    if not reglas.get("usa_audio_referencia"):
         audio = None
 
-    generar_audio = entrada.get("generar_audio", True)
-    if not isinstance(generar_audio, bool):
-        raise ErrorTrabajo("«generar_audio» tiene que ser true o false.")
-    generar_audio = generar_audio and reglas["tiene_audio"]
+    generar_audio = False
+    if not es_imagen:
+        generar_audio = entrada.get("generar_audio", True)
+        if not isinstance(generar_audio, bool):
+            raise ErrorTrabajo("«generar_audio» tiene que ser true o false.")
+        generar_audio = generar_audio and reglas["tiene_audio"]
 
     salida = entrada.get("salida")
     if salida is not None:
@@ -252,6 +280,7 @@ def validar_entrada(entrada) -> dict:
 
     return {
         "flujo": flujo,
+        "tipo": "imagen" if es_imagen else "video",
         "prompt": prompt.strip(),
         "prompt_negativo": negativo,
         "duracion_seg": duracion,
@@ -365,11 +394,21 @@ def armar_prompt_api(plantilla: dict, valores: dict, banderas: dict,
                 entradas[k] = v
         nodo["inputs"] = reemplazar_marcadores(entradas, valores)
 
+    # "_meta.referencias": {"nodo": "8"} o {"nodos": ["6", "7"]} (la misma imagen va a
+    # todos), "prefijo" de la entrada y "inicio" del índice (0 en H3, 1 en image1..3 de Qwen).
     conf_refs = meta.get("referencias")
     if nombres_referencias:
-        if not conf_refs or conf_refs.get("nodo") not in nodos:
+        ids_destino = []
+        if conf_refs:
+            ids_destino = conf_refs.get("nodos") or [conf_refs.get("nodo")]
+        if not ids_destino or any(d not in nodos for d in ids_destino):
             raise ErrorTrabajo("Este flujo no acepta imágenes de referencia.")
-        destino = nodos[conf_refs["nodo"]]
+        maximo = conf_refs.get("maximo")
+        if maximo is not None and len(nombres_referencias) > maximo:
+            raise ErrorTrabajo(
+                f"Este flujo acepta como máximo {maximo} referencias y llegaron {len(nombres_referencias)}."
+            )
+        inicio = int(conf_refs.get("inicio", 0))
         for i, nombre in enumerate(nombres_referencias):
             nid = f"ref_{i + 1}"
             nodos[nid] = {
@@ -377,7 +416,8 @@ def armar_prompt_api(plantilla: dict, valores: dict, banderas: dict,
                 "inputs": {"image": nombre},
                 "_meta": {"title": f"Referencia {i + 1} (<Picture {i + 1}>)"},
             }
-            destino["inputs"][f"{conf_refs['prefijo']}{i}"] = [nid, 0]
+            for d in ids_destino:
+                nodos[d]["inputs"][f"{conf_refs['prefijo']}{inicio + i}"] = [nid, 0]
 
     # Entradas que apuntan a nodos quitados (p. ej. sin imagen inicial).
     cambio = True
@@ -392,7 +432,7 @@ def armar_prompt_api(plantilla: dict, valores: dict, banderas: dict,
     # Poda: solo lo que alimenta a un nodo de salida.
     salidas = [nid for nid, n in nodos.items() if n["class_type"] in NODOS_DE_SALIDA]
     if not salidas:
-        raise ErrorTrabajo("El flujo no tiene nodo de salida de video (SaveVideo o VHS_VideoCombine).")
+        raise ErrorTrabajo("El flujo no tiene nodo de salida (SaveVideo, VHS_VideoCombine o SaveImage).")
     vivos, pendientes = set(), list(salidas)
     while pendientes:
         nid = pendientes.pop()
@@ -462,6 +502,29 @@ def extraer_videos(historial: dict) -> list[dict]:
                 if isinstance(item, dict) and str(item.get("filename", "")).lower().endswith(EXTENSIONES_VIDEO):
                     videos.append(item)
     return videos
+
+
+def extraer_imagenes(historial: dict) -> list[dict]:
+    """Busca las imágenes en la salida de /history (SaveImage usa "images" con type "output").
+
+    Primero las de tipo "output"; las "temp" (PreviewImage) solo si no hay otras.
+    """
+    guardadas, temporales = [], []
+    for salida in (historial.get("outputs") or {}).values():
+        if not isinstance(salida, dict):
+            continue
+        for item in salida.get("images") or []:
+            if not isinstance(item, dict):
+                continue
+            ext = os.path.splitext(str(item.get("filename", "")).lower())[1]
+            if ext not in MIME_POR_EXTENSION_IMAGEN:
+                continue
+            (guardadas if item.get("type", "output") == "output" else temporales).append(item)
+    return guardadas or temporales
+
+
+def mime_de_imagen(nombre: str) -> str:
+    return MIME_POR_EXTENSION_IMAGEN.get(os.path.splitext(nombre.lower())[1], "image/png")
 
 
 def es_error_de_memoria(texto: str) -> bool:
@@ -672,7 +735,8 @@ def esperar_resultado(prompt_id: str, limite_seg: float) -> dict:
         time.sleep(INTERVALO_SONDEO_SEG)
 
 
-def leer_video(item: dict) -> bytes:
+def leer_video(item: dict, que: str = "el video") -> bytes:
+    """Lee el archivo de salida (video o imagen) del disco o, si no está, por /view."""
     if item.get("type", "output") == "output":
         ruta = os.path.join(DIR_OUTPUT, item.get("subfolder") or "", item["filename"])
         if os.path.isfile(ruta):
@@ -684,17 +748,18 @@ def leer_video(item: dict) -> bytes:
     })
     estado, cuerpo = http("GET", _url_comfy(f"/view?{consulta}"), timeout=120)
     if estado != 200 or not cuerpo:
-        raise ErrorTrabajo(f"No pude leer el video de salida «{item['filename']}» (HTTP {estado}).")
+        raise ErrorTrabajo(f"No pude leer {que} de salida «{item['filename']}» (HTTP {estado}).")
     return cuerpo
 
 
-def subir_video(contenido: bytes, salida: dict) -> str:
+def subir_video(contenido: bytes, salida: dict, mime: str = "video/mp4", que: str = "el video") -> str:
+    """Sube el resultado (video o imagen) con PUT a la URL prefirmada."""
     try:
-        estado, _ = http("PUT", salida["url_subida"], contenido, {"Content-Type": "video/mp4"}, timeout=300)
+        estado, _ = http("PUT", salida["url_subida"], contenido, {"Content-Type": mime}, timeout=300)
     except Exception as e:
-        raise ErrorTrabajo(f"No pude subir el video a «salida.url_subida»: {e}")
+        raise ErrorTrabajo(f"No pude subir {que} a «salida.url_subida»: {e}")
     if estado not in (200, 201, 204):
-        raise ErrorTrabajo(f"No pude subir el video a «salida.url_subida» (HTTP {estado}).")
+        raise ErrorTrabajo(f"No pude subir {que} a «salida.url_subida» (HTTP {estado}).")
     return salida.get("url_publica") or url_sin_query(salida["url_subida"])
 
 
@@ -715,8 +780,11 @@ def procesar(entrada: dict, id_trabajo: str) -> dict:
     reglas = FLUJOS[flujo]
     plantilla = cargar_flujo(flujo)
     meta = plantilla.get("_meta") or {}
+    es_imagen = datos["tipo"] == "imagen"
 
-    frames = calcular_frames(datos["duracion_seg"], datos["fps"], reglas["regla_frames"])
+    frames = None
+    if not es_imagen:
+        frames = calcular_frames(datos["duracion_seg"], datos["fps"], reglas["regla_frames"])
     prefijo = re.sub(r"[^A-Za-z0-9_-]", "_", str(id_trabajo))[:40] or "trabajo"
 
     esperar_comfy()
@@ -754,14 +822,17 @@ def procesar(entrada: dict, id_trabajo: str) -> dict:
             "ALTO": datos["alto"],
             "ANCHO_MEDIO": datos["ancho"] // 2,
             "ALTO_MEDIO": datos["alto"] // 2,
-            "FRAMES": frames,
-            "FPS": datos["fps"],
-            "DURACION_SEG": round(frames / datos["fps"], 4),
             "SEMILLA": datos["semilla"],
             "IMAGEN_INICIAL": nombre_imagen or "",
             "AUDIO_REFERENCIA": nombre_audio or "",
             "PREFIJO_SALIDA": f"seriesia/{prefijo}",
         }
+        if not es_imagen:
+            valores.update({
+                "FRAMES": frames,
+                "FPS": datos["fps"],
+                "DURACION_SEG": round(frames / datos["fps"], 4),
+            })
         banderas = {
             "imagen_inicial": nombre_imagen is not None,
             "audio_referencia": nombre_audio is not None,
@@ -785,6 +856,8 @@ def procesar(entrada: dict, id_trabajo: str) -> dict:
 
         prompt_id = enviar_prompt(prompt, id_cliente=prefijo)
         historial = esperar_resultado(prompt_id, TIEMPO_MAX_SEG)
+        if es_imagen:
+            return _respuesta_imagen(historial, datos, archivos_creados)
         videos = extraer_videos(historial)
         if not videos:
             raise ErrorTrabajo("ComfyUI terminó pero no dejó ningún video (.mp4) en la salida.")
@@ -810,6 +883,30 @@ def procesar(entrada: dict, id_trabajo: str) -> dict:
         return respuesta
     finally:
         _borrar(archivos_creados)
+
+
+def _respuesta_imagen(historial: dict, datos: dict, archivos_creados: list[str]) -> dict:
+    """Arma la salida de los flujos de imagen: {"imagen_base64"|"imagen_url", "mime", …}."""
+    imagenes = extraer_imagenes(historial)
+    if not imagenes:
+        raise ErrorTrabajo("ComfyUI terminó pero no dejó ninguna imagen (.png) en la salida.")
+    item = imagenes[0]
+    contenido = leer_video(item, "la imagen")
+    if item.get("type", "output") == "output":
+        archivos_creados.append(os.path.join(DIR_OUTPUT, item.get("subfolder") or "", item["filename"]))
+    mime = mime_de_imagen(item["filename"])
+    respuesta = {
+        "mime": mime,
+        "flujo": datos["flujo"],
+        "ancho": datos["ancho"],
+        "alto": datos["alto"],
+        "semilla": datos["semilla"],
+    }
+    if datos["salida"]:
+        respuesta["imagen_url"] = subir_video(contenido, datos["salida"], mime, "la imagen")
+    else:
+        respuesta["imagen_base64"] = base64.b64encode(contenido).decode("ascii")
+    return respuesta
 
 
 def handler(job: dict) -> dict:
