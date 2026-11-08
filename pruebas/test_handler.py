@@ -26,7 +26,8 @@ PNG_1PX = base64.b64encode(
 WAV = base64.b64encode(b"RIFF\x24\x00\x00\x00WAVEfmt ").decode()
 MP4 = b"\x00\x00\x00\x18ftypmp42video-falso"
 FLUJOS_VIDEO = ("h3-ref", "ltx25-i2v", "wan22-i2v", "wan22-ti2v-5b")
-FLUJOS_IMAGEN = ("zimage-t2i", "qwen-edit-ref", "qwen-edit-rapido")
+FLUJOS_CATALOGO = ("catalogo-prenda", "catalogo-modelo", "catalogo-angulos", "mejorar-2k")
+FLUJOS_IMAGEN = ("zimage-t2i", "qwen-edit-ref", "qwen-edit-rapido") + FLUJOS_CATALOGO
 FLUJOS = FLUJOS_VIDEO + FLUJOS_IMAGEN
 
 
@@ -323,7 +324,8 @@ class PruebasValidacion(unittest.TestCase):
 class PruebasFlujos(unittest.TestCase):
     VALORES = {"PROMPT": "p", "PROMPT_NEGATIVO": "n", "ANCHO": 704, "ALTO": 1280, "ANCHO_MEDIO": 352,
                "ALTO_MEDIO": 640, "FRAMES": 121, "FPS": 24, "DURACION_SEG": 5.0417, "SEMILLA": 1,
-               "IMAGEN_INICIAL": "img.png", "AUDIO_REFERENCIA": "voz.wav", "PREFIJO_SALIDA": "seriesia/t"}
+               "IMAGEN_INICIAL": "img.png", "AUDIO_REFERENCIA": "voz.wav", "PREFIJO_SALIDA": "seriesia/t",
+               "REFERENCIA_1": "r1.png", "REFERENCIA_2": "r2.png", "REFERENCIA_3": "", "FUERZA": 0.33}
 
     def revisar_grafo(self, prompt, es_imagen=False):
         texto = json.dumps(prompt, ensure_ascii=False)
@@ -628,8 +630,9 @@ class PruebasHandlerCompleto(BaseConCarpetas):
                                 "semilla": 42, "aspecto": "9:16"}, falso)
         self.assertNotIn("error", r, r.get("error"))
         self.assertEqual(base64.b64decode(r["imagen_base64"]), base64.b64decode(PNG_1PX))
+        # ancho/alto de la respuesta = los del PNG real (aquí 1×1), no los pedidos
         self.assertEqual((r["mime"], r["flujo"], r["ancho"], r["alto"], r["semilla"]),
-                         ("image/png", "zimage-t2i", 768, 1344, 42))
+                         ("image/png", "zimage-t2i", 1, 1, 42))
         self.assertIsInstance(r["segundos_gpu"], float)
         for clave in ("video_base64", "video_url", "duracion_seg", "fps", "frames"):
             self.assertNotIn(clave, r)
@@ -681,7 +684,7 @@ class PruebasHandlerCompleto(BaseConCarpetas):
                                                  "url": "https://ejemplo.com/corse.jpg"}]}, falso)
         self.assertNotIn("error", r, r.get("error"))
         self.assertEqual((r["mime"], r["flujo"], r["ancho"], r["alto"], r["semilla"]),
-                         ("image/png", "qwen-edit-rapido", 768, 1024, 11))
+                         ("image/png", "qwen-edit-rapido", 1, 1, 11))
         self.assertEqual(base64.b64decode(r["imagen_base64"]), base64.b64decode(PNG_1PX))
         p = falso.prompt_enviado
         self.assertTrue(p["ref_1"]["inputs"]["image"].endswith("clienta.png"))

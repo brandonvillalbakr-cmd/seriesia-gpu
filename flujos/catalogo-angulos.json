@@ -1,0 +1,76 @@
+{
+  "_meta": {
+    "descripcion": "Catálogo – Una vista por trabajo: de una foto con la prenda puesta saca UNA de las 6 fotos de catálogo (frente, espalda, lado, tres_cuartos, detalle, caminando) según «angulo». Convertido del flujo de panel «03 Catálogo – 6 fotos.json», que hacía las 6 en un solo grafo; aquí la app manda un trabajo por ángulo (ver «por_que_un_trabajo_por_angulo»).",
+    "tipo": "imagen",
+    "origen_panel": "gpu/flujos-panel/03 Catálogo – 6 fotos.json",
+    "por_que_un_trabajo_por_angulo": "El handler devuelve una sola imagen por trabajo (contrato fijo con la app). Separar los ángulos además permite: correr hasta 5 en paralelo en trabajadores distintos (el panel los hacía en fila, ~5 min), reintentar solo el que falló sin pagar los otros 5, mostrar cada foto apenas está lista y pedir solo algunas. El costo extra es mínimo: un trabajador caliente ya tiene los modelos en memoria.",
+    "fuente_verificada": [
+      "https://huggingface.co/fal/Qwen-Image-Edit-2511-Multiple-Angles-LoRA (sha e3066224; archivo qwen-image-edit-2511-multiple-angles-lora.safetensors; frases que empiezan con <sks> + vista + altura + plano)",
+      "https://github.com/Comfy-Org/workflow_templates/blob/main/templates/image_qwen_image_edit_2511.json (orden UNETLoader → ModelSamplingAuraFlow 3.1 → CFGNorm → LoRA Lightning)",
+      "https://huggingface.co/lightx2v/Qwen-Image-Edit-2511-Lightning (LoRA de 4 pasos, cfg 1)"
+    ],
+    "fecha_verificacion": "2026-11-08",
+    "comfyui_minimo": "v0.44.2 (la que instala el Dockerfile)",
+    "nodos_requeridos": [
+      "UNETLoader", "LoraLoaderModelOnly", "ModelSamplingAuraFlow", "CFGNorm", "CLIPLoader", "VAELoader", "LoadImage",
+      "ImageScale", "TextEncodeQwenImageEditPlus", "FluxKontextMultiReferenceLatentMethod", "EmptySD3LatentImage",
+      "KSampler", "VAEDecode", "SaveImage"
+    ],
+    "nodos_personalizados": "ninguno (todo nativo de ComfyUI). Del panel se quitaron MarkdownNote, PrimitiveInt y PrimitiveFloat.",
+    "referencias": {"modo": "marcadores", "minimo": 1, "maximo": 1, "orden": ["foto con la prenda puesta (se ajusta al tamaño de salida)"]},
+    "angulos_con_lora": ["frente", "espalda", "lado", "tres_cuartos"],
+    "prompts": {
+      "frente": "<sks> front view eye-level shot wide shot. Keep exactly the same woman (face, hair, skin tone, body) and exactly the same outfit (color, fabric, details), same clean light grey photo studio and soft lighting. Photorealistic e-commerce catalog photo.",
+      "espalda": "<sks> back view eye-level shot wide shot. Keep exactly the same woman (face, hair, skin tone, body) and exactly the same outfit (color, fabric, details), same clean light grey photo studio and soft lighting. Photorealistic e-commerce catalog photo.",
+      "lado": "<sks> right side view eye-level shot wide shot. Keep exactly the same woman (face, hair, skin tone, body) and exactly the same outfit (color, fabric, details), same clean light grey photo studio and soft lighting. Photorealistic e-commerce catalog photo.",
+      "tres_cuartos": "<sks> front-left quarter view eye-level shot medium shot. Keep exactly the same woman (face, hair, skin tone, body) and exactly the same outfit (color, fabric, details), same clean light grey photo studio and soft lighting. Photorealistic e-commerce catalog photo.",
+      "detalle": "Extreme close-up macro photo of the garment worn by the woman: show the fabric texture, the weave, the stitching, seams, elastic and finishing in sharp detail. Same garment, same exact color. Soft studio lighting, shallow depth of field, photorealistic e-commerce detail shot.",
+      "caminando": "Full body photo of the same woman wearing exactly the same outfit, walking confidently towards the camera like on a fashion runway, natural stride, arms relaxed, hair moving slightly, full body from head to toe, clean light grey photo studio. Keep her face, body and the outfit identical. Photorealistic fashion catalog photo."
+    },
+    "modelos": [
+      {"archivo": "qwen_image_edit_2511_fp8mixed.safetensors", "carpeta": "diffusion_models", "repo": "Comfy-Org/Qwen-Image-Edit", "ruta": "split_files/diffusion_models/qwen_image_edit_2511_fp8mixed.safetensors", "gb": 20.53},
+      {"archivo": "qwen_2.5_vl_7b_fp8_scaled.safetensors", "carpeta": "text_encoders", "repo": "Comfy-Org/Qwen-Image", "ruta": "split_files/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors", "gb": 9.38},
+      {"archivo": "qwen_image_vae.safetensors", "carpeta": "vae", "repo": "Comfy-Org/Qwen-Image", "ruta": "split_files/vae/qwen_image_vae.safetensors", "gb": 0.25},
+      {"archivo": "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors", "carpeta": "loras", "repo": "lightx2v/Qwen-Image-Edit-2511-Lightning", "ruta": "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors", "gb": 0.85},
+      {"archivo": "qwen-image-edit-2511-multiple-angles-lora.safetensors", "carpeta": "loras", "repo": "fal/Qwen-Image-Edit-2511-Multiple-Angles-LoRA", "ruta": "qwen-image-edit-2511-multiple-angles-lora.safetensors", "gb": 0.3}
+    ],
+    "carpetas_de_modelos": {
+      "qwen_image_edit_2511_fp8mixed.safetensors": "diffusion_models",
+      "qwen_2.5_vl_7b_fp8_scaled.safetensors": "text_encoders",
+      "qwen_image_vae.safetensors": "vae",
+      "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors": "loras",
+      "qwen-image-edit-2511-multiple-angles-lora.safetensors": "loras"
+    },
+    "parametros": "Como el panel: frente, espalda, lado y tres_cuartos pasan por la LoRA Multiángulo (fuerza 1, antes de ModelSamplingAuraFlow) y su frase empieza con <sks>; detalle y caminando usan el modelo sin esa LoRA. La foto se ajusta a ancho×alto (lanczos, recorte al centro). Calidad «rapida»: LoRA Lightning después de CFGNorm, 4 pasos, cfg 1; «alta»: 20 pasos, cfg 4. En el panel la LoRA Lightning iba antes de la Multiángulo; aquí va después de CFGNorm como en la plantilla oficial (son parches del modelo: el orden no cambia el resultado).",
+    "prompt_negativo_defecto": "",
+    "vram_aproximada": "La misma de qwen-edit-ref (~24–32 GB) + ~1,2 GB de las dos LoRA.",
+    "licencia": "Qwen-Image-Edit-2511: Apache 2.0 (Qwen). LoRA Multiángulo de fal: revisar la licencia en su página antes de vender el servicio a terceros.",
+    "_TODO": [
+      "Confirmar en la primera corrida que la LoRA Multiángulo y la Lightning juntas no degradan la cara (si pasa, usar calidad «alta» para los ángulos).",
+      "Medir los segundos de GPU reales y ajustar SEGUNDOS_GPU en lib/estudio-ia/catalogo.ts."
+    ]
+  },
+  "1": {"class_type": "UNETLoader", "inputs": {"unet_name": "qwen_image_edit_2511_fp8mixed.safetensors", "weight_dtype": "default"}},
+  "15": {"class_type": "LoraLoaderModelOnly", "_si": "lora_angulos", "_meta": {"title": "LoRA Multiángulo (cámara)"}, "inputs": {"model": ["1", 0], "lora_name": "qwen-image-edit-2511-multiple-angles-lora.safetensors", "strength_model": 1.0}},
+  "2": {"class_type": "ModelSamplingAuraFlow", "inputs": {"model": {"_si": "lora_angulos", "entonces": ["15", 0], "si_no": ["1", 0]}, "shift": 3.1}},
+  "3": {"class_type": "CFGNorm", "inputs": {"model": ["2", 0], "strength": 1.0, "pre_cfg": false}},
+  "14": {"class_type": "LoraLoaderModelOnly", "_si": "lightning", "_meta": {"title": "LoRA Lightning 4 pasos (solo calidad rápida)"}, "inputs": {"model": ["3", 0], "lora_name": "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors", "strength_model": 1.0}},
+  "4": {"class_type": "CLIPLoader", "inputs": {"clip_name": "qwen_2.5_vl_7b_fp8_scaled.safetensors", "type": "qwen_image", "device": "default"}},
+  "5": {"class_type": "VAELoader", "inputs": {"vae_name": "qwen_image_vae.safetensors"}},
+  "20": {"class_type": "LoadImage", "_meta": {"title": "Foto con la prenda puesta"}, "inputs": {"image": "{{REFERENCIA_1}}"}},
+  "22": {"class_type": "ImageScale", "_meta": {"title": "Ajustar al tamaño de salida"}, "inputs": {"image": ["20", 0], "upscale_method": "lanczos", "width": "{{ANCHO}}", "height": "{{ALTO}}", "crop": "center"}},
+  "6": {"class_type": "TextEncodeQwenImageEditPlus", "_meta": {"title": "Vista (prompt del ángulo)"}, "inputs": {"clip": ["4", 0], "vae": ["5", 0], "prompt": "{{PROMPT}}", "image1": ["22", 0]}},
+  "7": {"class_type": "TextEncodeQwenImageEditPlus", "_meta": {"title": "Negativo"}, "inputs": {"clip": ["4", 0], "vae": ["5", 0], "prompt": "{{PROMPT_NEGATIVO}}", "image1": ["22", 0]}},
+  "8": {"class_type": "FluxKontextMultiReferenceLatentMethod", "inputs": {"conditioning": ["6", 0], "reference_latents_method": "index_timestep_zero"}},
+  "9": {"class_type": "FluxKontextMultiReferenceLatentMethod", "inputs": {"conditioning": ["7", 0], "reference_latents_method": "index_timestep_zero"}},
+  "10": {"class_type": "EmptySD3LatentImage", "inputs": {"width": "{{ANCHO}}", "height": "{{ALTO}}", "batch_size": 1}},
+  "11": {"class_type": "KSampler", "inputs": {
+    "model": {"_si": "lightning", "entonces": ["14", 0], "si_no": ["3", 0]},
+    "seed": "{{SEMILLA}}",
+    "steps": {"_si": "lightning", "entonces": 4, "si_no": 20},
+    "cfg": {"_si": "lightning", "entonces": 1.0, "si_no": 4.0},
+    "sampler_name": "euler", "scheduler": "simple",
+    "positive": ["8", 0], "negative": ["9", 0], "latent_image": ["10", 0], "denoise": 1.0}},
+  "12": {"class_type": "VAEDecode", "inputs": {"samples": ["11", 0], "vae": ["5", 0]}},
+  "13": {"class_type": "SaveImage", "inputs": {"images": ["12", 0], "filename_prefix": "{{PREFIJO_SALIDA}}"}}
+}

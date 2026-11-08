@@ -1,0 +1,67 @@
+{
+  "_meta": {
+    "descripcion": "Catálogo – Vestir a la modelo: la modelo de la referencia 1 se pone la prenda de la referencia 2 (fondo de estudio, misma cara y cuerpo). Convertido del flujo de panel «01 Catálogo – Cambiar prenda.json». Calidad «rapida» (por defecto) = LoRA Lightning 4 pasos, cfg 1; «alta» = 20 pasos, cfg 4, como el panel.",
+    "tipo": "imagen",
+    "origen_panel": "gpu/flujos-panel/01 Catálogo – Cambiar prenda.json",
+    "fuente_verificada": [
+      "https://github.com/Comfy-Org/workflow_templates/blob/main/templates/image_qwen_image_edit_2511.json (orden UNETLoader → ModelSamplingAuraFlow 3.1 → CFGNorm → LoRA Lightning; KSampler euler/simple)",
+      "https://huggingface.co/lightx2v/Qwen-Image-Edit-2511-Lightning (LoRA de 4 pasos, cfg 1)",
+      "https://github.com/Comfy-Org/ComfyUI/blob/v0.44.2/nodes.py (ImageScale: upscale_method, width, height, crop)"
+    ],
+    "fecha_verificacion": "2026-11-08",
+    "comfyui_minimo": "v0.44.2 (la que instala el Dockerfile)",
+    "nodos_requeridos": [
+      "UNETLoader", "ModelSamplingAuraFlow", "CFGNorm", "LoraLoaderModelOnly", "CLIPLoader", "VAELoader", "LoadImage",
+      "ImageScale", "TextEncodeQwenImageEditPlus", "FluxKontextMultiReferenceLatentMethod", "EmptySD3LatentImage",
+      "KSampler", "VAEDecode", "SaveImage"
+    ],
+    "nodos_personalizados": "ninguno (todo nativo de ComfyUI). Del panel se quitaron MarkdownNote (solo existe en la interfaz), PrimitiveInt y PrimitiveFloat (pasos y cfg van escritos en el KSampler).",
+    "referencias": {"modo": "marcadores", "minimo": 2, "maximo": 2, "orden": ["modelo (foto 1, se ajusta al tamaño de salida)", "prenda (foto 2)"]},
+    "prompts": {
+      "base": "Dress the woman from image 1 in the garment from image 2. Keep her face, identity, skin tone, hairstyle, body shape, proportions and pose exactly the same. Reproduce the garment from image 2 faithfully: same color, fabric, lace, print, neckline, straps, seams and fit, worn naturally on her body with realistic folds and tension. Clean professional fashion studio, light grey seamless backdrop, soft diffused studio lighting, full body e-commerce catalog photo, photorealistic, sharp detail."
+    },
+    "modelos": [
+      {"archivo": "qwen_image_edit_2511_fp8mixed.safetensors", "carpeta": "diffusion_models", "repo": "Comfy-Org/Qwen-Image-Edit", "ruta": "split_files/diffusion_models/qwen_image_edit_2511_fp8mixed.safetensors", "gb": 20.53},
+      {"archivo": "qwen_2.5_vl_7b_fp8_scaled.safetensors", "carpeta": "text_encoders", "repo": "Comfy-Org/Qwen-Image", "ruta": "split_files/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors", "gb": 9.38},
+      {"archivo": "qwen_image_vae.safetensors", "carpeta": "vae", "repo": "Comfy-Org/Qwen-Image", "ruta": "split_files/vae/qwen_image_vae.safetensors", "gb": 0.25},
+      {"archivo": "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors", "carpeta": "loras", "repo": "lightx2v/Qwen-Image-Edit-2511-Lightning", "ruta": "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors", "gb": 0.85}
+    ],
+    "carpetas_de_modelos": {
+      "qwen_image_edit_2511_fp8mixed.safetensors": "diffusion_models",
+      "qwen_2.5_vl_7b_fp8_scaled.safetensors": "text_encoders",
+      "qwen_image_vae.safetensors": "vae",
+      "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors": "loras"
+    },
+    "parametros": "Igual que el panel: la foto 1 se ajusta a ancho×alto (lanczos, recorte al centro; 864×1536 por defecto) y entra como image1; la prenda entra tal cual como image2. Calidad «rapida»: LoRA Lightning después de CFGNorm, 4 pasos, cfg 1 (como qwen-edit-rapido). Calidad «alta»: sin LoRA, 20 pasos, cfg 4 (valores del panel). Latente EmptySD3LatentImage del mismo tamaño (el panel codificaba la foto 1 con VAEEncode, pero con denoise 1 el contenido del latente no influye: solo su tamaño).",
+    "prompt_negativo_defecto": "",
+    "vram_aproximada": "La misma de qwen-edit-ref (~24–32 GB) + 0,85 GB de la LoRA.",
+    "licencia": "Qwen-Image-Edit-2511: Apache 2.0 (Qwen).",
+    "_TODO": [
+      "Medir en la primera corrida real los segundos de GPU (rápida y alta) y ajustar SEGUNDOS_GPU en lib/estudio-ia/catalogo.ts.",
+      "Si la prenda sale poco fiel en «rapida», probar la LoRA de 8 pasos (ya en models/loras)."
+    ]
+  },
+  "1": {"class_type": "UNETLoader", "inputs": {"unet_name": "qwen_image_edit_2511_fp8mixed.safetensors", "weight_dtype": "default"}},
+  "2": {"class_type": "ModelSamplingAuraFlow", "inputs": {"model": ["1", 0], "shift": 3.1}},
+  "3": {"class_type": "CFGNorm", "inputs": {"model": ["2", 0], "strength": 1.0, "pre_cfg": false}},
+  "14": {"class_type": "LoraLoaderModelOnly", "_si": "lightning", "_meta": {"title": "LoRA Lightning 4 pasos (solo calidad rápida)"}, "inputs": {"model": ["3", 0], "lora_name": "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors", "strength_model": 1.0}},
+  "4": {"class_type": "CLIPLoader", "inputs": {"clip_name": "qwen_2.5_vl_7b_fp8_scaled.safetensors", "type": "qwen_image", "device": "default"}},
+  "5": {"class_type": "VAELoader", "inputs": {"vae_name": "qwen_image_vae.safetensors"}},
+  "20": {"class_type": "LoadImage", "_meta": {"title": "Foto 1 – Modelo"}, "inputs": {"image": "{{REFERENCIA_1}}"}},
+  "21": {"class_type": "LoadImage", "_meta": {"title": "Foto 2 – Prenda"}, "inputs": {"image": "{{REFERENCIA_2}}"}},
+  "22": {"class_type": "ImageScale", "_meta": {"title": "Ajustar la foto 1 al tamaño de salida"}, "inputs": {"image": ["20", 0], "upscale_method": "lanczos", "width": "{{ANCHO}}", "height": "{{ALTO}}", "crop": "center"}},
+  "6": {"class_type": "TextEncodeQwenImageEditPlus", "_meta": {"title": "Instrucción"}, "inputs": {"clip": ["4", 0], "vae": ["5", 0], "prompt": "{{PROMPT}}", "image1": ["22", 0], "image2": ["21", 0]}},
+  "7": {"class_type": "TextEncodeQwenImageEditPlus", "_meta": {"title": "Negativo"}, "inputs": {"clip": ["4", 0], "vae": ["5", 0], "prompt": "{{PROMPT_NEGATIVO}}", "image1": ["22", 0], "image2": ["21", 0]}},
+  "8": {"class_type": "FluxKontextMultiReferenceLatentMethod", "inputs": {"conditioning": ["6", 0], "reference_latents_method": "index_timestep_zero"}},
+  "9": {"class_type": "FluxKontextMultiReferenceLatentMethod", "inputs": {"conditioning": ["7", 0], "reference_latents_method": "index_timestep_zero"}},
+  "10": {"class_type": "EmptySD3LatentImage", "inputs": {"width": "{{ANCHO}}", "height": "{{ALTO}}", "batch_size": 1}},
+  "11": {"class_type": "KSampler", "inputs": {
+    "model": {"_si": "lightning", "entonces": ["14", 0], "si_no": ["3", 0]},
+    "seed": "{{SEMILLA}}",
+    "steps": {"_si": "lightning", "entonces": 4, "si_no": 20},
+    "cfg": {"_si": "lightning", "entonces": 1.0, "si_no": 4.0},
+    "sampler_name": "euler", "scheduler": "simple",
+    "positive": ["8", 0], "negative": ["9", 0], "latent_image": ["10", 0], "denoise": 1.0}},
+  "12": {"class_type": "VAEDecode", "inputs": {"samples": ["11", 0], "vae": ["5", 0]}},
+  "13": {"class_type": "SaveImage", "inputs": {"images": ["12", 0], "filename_prefix": "{{PREFIJO_SALIDA}}"}}
+}

@@ -1,0 +1,58 @@
+{
+  "_meta": {
+    "descripcion": "Mejorar a 2K: lleva la foto a ~1 MP, la agranda ×4 con Real-ESRGAN, la baja a ×2 (~4 MP, p. ej. 1536×2720 en 9:16) y Z-Image Turbo la repasa con poco denoise (piel, tela, bordes) sin cambiarla. Convertido del flujo de panel «08 Mejorar a 2K.json».",
+    "tipo": "imagen",
+    "origen_panel": "gpu/flujos-panel/08 Mejorar a 2K.json",
+    "fuente_verificada": [
+      "https://github.com/Comfy-Org/ComfyUI/blob/v0.44.2/comfy_extras/nodes_post_processing.py (ImageScaleToTotalPixels: upscale_method, megapixels, resolution_steps)",
+      "https://github.com/Comfy-Org/ComfyUI/blob/v0.44.2/comfy_extras/nodes_upscale_model.py (UpscaleModelLoader 'model_name' en models/upscale_models; ImageUpscaleWithModel)",
+      "https://github.com/Comfy-Org/workflow_templates/blob/main/templates/image_z_image_turbo.json (Z-Image Turbo: CLIPLoader lumina2 con qwen_3_4b, VAE ae, ModelSamplingAuraFlow 3)"
+    ],
+    "fecha_verificacion": "2026-11-08",
+    "comfyui_minimo": "v0.44.2 (la que instala el Dockerfile)",
+    "nodos_requeridos": [
+      "LoadImage", "ImageScaleToTotalPixels", "UpscaleModelLoader", "ImageUpscaleWithModel", "ImageScaleBy",
+      "UNETLoader", "CLIPLoader", "VAELoader", "ModelSamplingAuraFlow", "CLIPTextEncode", "VAEEncode",
+      "KSampler", "VAEDecode", "SaveImage"
+    ],
+    "nodos_personalizados": "ninguno (todo nativo de ComfyUI). Del panel se quitó MarkdownNote.",
+    "referencias": {"modo": "marcadores", "minimo": 1, "maximo": 1, "orden": ["foto a mejorar"]},
+    "prompts": {
+      "base": "professional fashion catalog photo, sharp focus, detailed fabric texture, natural skin pores, masterpiece, 8k"
+    },
+    "modelos": [
+      {"archivo": "RealESRGAN_x4plus.safetensors", "carpeta": "upscale_models", "repo": "(ya en el volumen; si falta, el .pth de lllyasviel/Annotators también sirve: el handler acepta la otra extensión)", "ruta": "RealESRGAN_x4plus.pth", "gb": 0.07},
+      {"archivo": "z_image_turbo_bf16.safetensors", "carpeta": "diffusion_models", "repo": "Comfy-Org/Z-Image-Turbo", "ruta": "split_files/diffusion_models/z_image_turbo_bf16.safetensors", "gb": 12.31},
+      {"archivo": "qwen_3_4b.safetensors", "carpeta": "text_encoders", "repo": "Comfy-Org/Z-Image-Turbo", "ruta": "split_files/text_encoders/qwen_3_4b.safetensors", "gb": 8.04},
+      {"archivo": "ae.safetensors", "carpeta": "vae", "repo": "Comfy-Org/Z-Image-Turbo", "ruta": "split_files/vae/ae.safetensors", "gb": 0.34}
+    ],
+    "carpetas_de_modelos": {
+      "RealESRGAN_x4plus.safetensors": "upscale_models",
+      "z_image_turbo_bf16.safetensors": "diffusion_models",
+      "qwen_3_4b.safetensors": "text_encoders",
+      "ae.safetensors": "vae"
+    },
+    "parametros": "Valores del panel: ImageScaleToTotalPixels 1 MP lanczos → Real-ESRGAN ×4 → ImageScaleBy 0,5 → VAEEncode → KSampler 5 pasos, cfg 1, dpmpp_2m_sde/beta, denoise = «fuerza» (0,33 por defecto; 0,20–0,30 casi idéntica, 0,40–0,50 cambia cara o estampados) → VAEDecode. Único cambio: resolution_steps 16 (el panel tenía 1) para que los lados salgan múltiplo de 16 y el latente de Z-Image no tenga que recortar bordes. Ancho y alto los da la foto de entrada (se ignoran los del pedido); la respuesta trae los reales.",
+    "prompt_negativo_defecto": "",
+    "vram_aproximada": "~16–20 GB (Z-Image Turbo bf16 a ~4 MP + Real-ESRGAN).",
+    "licencia": "Real-ESRGAN: BSD-3. Z-Image: Apache 2.0 (Tongyi-MAI).",
+    "_TODO": [
+      "Medir los segundos de GPU reales (el panel dice 10–20 s en una 5090) y ajustar SEGUNDOS_GPU en lib/estudio-ia/catalogo.ts."
+    ]
+  },
+  "2": {"class_type": "LoadImage", "_meta": {"title": "Foto a mejorar"}, "inputs": {"image": "{{REFERENCIA_1}}"}},
+  "3": {"class_type": "ImageScaleToTotalPixels", "_meta": {"title": "Normalizar a 1 MP"}, "inputs": {"image": ["2", 0], "upscale_method": "lanczos", "megapixels": 1.0, "resolution_steps": 16}},
+  "4": {"class_type": "UpscaleModelLoader", "_meta": {"title": "Real-ESRGAN x4"}, "inputs": {"model_name": "RealESRGAN_x4plus.safetensors"}},
+  "5": {"class_type": "ImageUpscaleWithModel", "inputs": {"upscale_model": ["4", 0], "image": ["3", 0]}},
+  "6": {"class_type": "ImageScaleBy", "_meta": {"title": "x4 → x2"}, "inputs": {"image": ["5", 0], "upscale_method": "lanczos", "scale_by": 0.5}},
+  "7": {"class_type": "UNETLoader", "inputs": {"unet_name": "z_image_turbo_bf16.safetensors", "weight_dtype": "default"}},
+  "8": {"class_type": "CLIPLoader", "inputs": {"clip_name": "qwen_3_4b.safetensors", "type": "lumina2", "device": "default"}},
+  "9": {"class_type": "VAELoader", "inputs": {"vae_name": "ae.safetensors"}},
+  "10": {"class_type": "ModelSamplingAuraFlow", "inputs": {"model": ["7", 0], "shift": 3.0}},
+  "11": {"class_type": "CLIPTextEncode", "_meta": {"title": "Qué mejorar"}, "inputs": {"clip": ["8", 0], "text": "{{PROMPT}}"}},
+  "12": {"class_type": "CLIPTextEncode", "_meta": {"title": "Negativo"}, "inputs": {"clip": ["8", 0], "text": "{{PROMPT_NEGATIVO}}"}},
+  "13": {"class_type": "VAEEncode", "inputs": {"pixels": ["6", 0], "vae": ["9", 0]}},
+  "14": {"class_type": "KSampler", "_meta": {"title": "Repaso (denoise = fuerza)"}, "inputs": {"model": ["10", 0], "seed": "{{SEMILLA}}", "steps": 5, "cfg": 1.0, "sampler_name": "dpmpp_2m_sde", "scheduler": "beta", "positive": ["11", 0], "negative": ["12", 0], "latent_image": ["13", 0], "denoise": "{{FUERZA}}"}},
+  "15": {"class_type": "VAEDecode", "inputs": {"samples": ["14", 0], "vae": ["9", 0]}},
+  "16": {"class_type": "SaveImage", "_meta": {"title": "Foto 2K"}, "inputs": {"images": ["15", 0], "filename_prefix": "{{PREFIJO_SALIDA}}"}}
+}

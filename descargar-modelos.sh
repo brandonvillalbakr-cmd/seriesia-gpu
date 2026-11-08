@@ -136,6 +136,11 @@ bajar_imagen() {
   # LoRA Lightning (lightx2v) para el flujo qwen-edit-rapido: 4 pasos con cfg 1; la de 8 pasos es el plan B de calidad.
   bajar lightx2v/Qwen-Image-Edit-2511-Lightning Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors loras
   bajar lightx2v/Qwen-Image-Edit-2511-Lightning Qwen-Image-Edit-2511-Lightning-8steps-V1.0-bf16.safetensors loras
+  # Máquina de catálogos: LoRA Multiángulo (catalogo-angulos) y Real-ESRGAN ×4 (mejorar-2k).
+  # El 8/11/2026 ya estaban en el volumen. Real-ESRGAN se baja en .pth: el handler acepta
+  # «RealESRGAN_x4plus.pth» aunque el flujo pida «.safetensors» (resolver_extensiones_de_modelo).
+  bajar fal/Qwen-Image-Edit-2511-Multiple-Angles-LoRA qwen-image-edit-2511-multiple-angles-lora.safetensors loras
+  bajar lllyasviel/Annotators RealESRGAN_x4plus.pth upscale_models
 }
 
 case "$OPCION" in

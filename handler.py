@@ -89,6 +89,34 @@ FLUJOS: dict[str, dict] = {
         "tipo": "imagen", "multiplo": 16, "dimensiones": (768, 1344),
         "requiere_imagen": False, "requiere_referencias": True, "max_referencias": 3,
     },
+    # Máquina de catálogos (convertidos de gpu/flujos-panel/). El texto base de cada uno
+    # está en "_meta.prompts" del JSON: aquí el «prompt» es opcional y se suma al final.
+    #  - calidades: "rapida" (LoRA Lightning 4 pasos, cfg 1; por defecto) o "alta" (20 pasos, cfg 4)
+    #  - catalogo-prenda:  referencias = [modelo, prenda]
+    #  - catalogo-modelo:  referencias = [prenda puesta, modelo nueva?] (sin foto 2, el prompt la describe)
+    #  - catalogo-angulos: referencias = [prenda puesta] + «angulo» (un trabajo por ángulo)
+    #  - mejorar-2k:       referencias = [foto] + «fuerza» (denoise); el tamaño lo da la foto
+    "catalogo-prenda": {
+        "tipo": "imagen", "multiplo": 16, "dimensiones": (864, 1536), "prompt_opcional": True,
+        "requiere_imagen": False, "requiere_referencias": True, "min_referencias": 2, "max_referencias": 2,
+        "calidades": ("rapida", "alta"),
+    },
+    "catalogo-modelo": {
+        "tipo": "imagen", "multiplo": 16, "dimensiones": (864, 1536), "prompt_opcional": True,
+        "requiere_imagen": False, "requiere_referencias": True, "min_referencias": 1, "max_referencias": 2,
+        "calidades": ("rapida", "alta"),
+    },
+    "catalogo-angulos": {
+        "tipo": "imagen", "multiplo": 16, "dimensiones": (864, 1536), "prompt_opcional": True,
+        "requiere_imagen": False, "requiere_referencias": True, "min_referencias": 1, "max_referencias": 1,
+        "calidades": ("rapida", "alta"),
+        "angulos": ("frente", "espalda", "lado", "tres_cuartos", "detalle", "caminando"),
+    },
+    "mejorar-2k": {
+        "tipo": "imagen", "multiplo": 16, "dimensiones": (864, 1536), "prompt_opcional": True,
+        "requiere_imagen": False, "requiere_referencias": True, "min_referencias": 1, "max_referencias": 1,
+        "fuerza": (0.1, 0.6, 0.33),
+    },
 }
 
 
@@ -194,9 +222,18 @@ def validar_entrada(entrada) -> dict:
     reglas = FLUJOS[flujo]
     es_imagen = es_flujo_de_imagen(flujo)
     prompt = entrada.get("prompt")
-    if not isinstance(prompt, str) or not prompt.strip():
+    if reglas.get("prompt_opcional"):
+        # Flujos con texto base propio (_meta.prompts): el prompt es un agregado opcional.
+        if prompt is None:
+            prompt = ""
+        if not isinstance(prompt, str):
+            raise ErrorTrabajo("«prompt» tiene que ser texto.")
+    elif not isinstance(prompt, str) or not prompt.strip():
         raise ErrorTrabajo("Falta el «prompt» (texto de la imagen)." if es_imagen
                            else "Falta el «prompt» (texto de la toma).")
+    prompt_base = entrada.get("prompt_base")
+    if prompt_base is not None and (not isinstance(prompt_base, str) or not prompt_base.strip()):
+        raise ErrorTrabajo("«prompt_base» tiene que ser un texto no vacío.")
     negativo = entrada.get("prompt_negativo")
     if negativo is not None and not isinstance(negativo, str):
         raise ErrorTrabajo("«prompt_negativo» tiene que ser texto.")
@@ -257,6 +294,11 @@ def validar_entrada(entrada) -> dict:
                 f"El flujo «{flujo}» acepta como máximo {reglas['max_referencias']} referencias "
                 f"y llegaron {len(referencias)}."
             )
+        minimo = reglas.get("min_referencias", 1)
+        if len(referencias) < minimo:
+            raise ErrorTrabajo(
+                f"El flujo «{flujo}» necesita {minimo} imágenes en «referencias» y llegaron {len(referencias)}."
+            )
     else:
         referencias = []  # los demás flujos no usan referencias
     if es_imagen:
@@ -283,6 +325,26 @@ def validar_entrada(entrada) -> dict:
         if pub is not None and not isinstance(pub, str):
             raise ErrorTrabajo("«salida.url_publica» tiene que ser texto.")
 
+    angulo = None
+    if reglas.get("angulos"):
+        angulo = entrada.get("angulo")
+        if angulo not in reglas["angulos"]:
+            raise ErrorTrabajo(
+                f"El flujo «{flujo}» necesita «angulo»: uno de {', '.join(reglas['angulos'])}."
+            )
+    calidad = None
+    if reglas.get("calidades"):
+        calidad = entrada.get("calidad") or reglas["calidades"][0]
+        if calidad not in reglas["calidades"]:
+            raise ErrorTrabajo(f"«calidad» tiene que ser {' o '.join(reglas['calidades'])}.")
+    fuerza = None
+    if reglas.get("fuerza"):
+        fmin, fmax, fdef = reglas["fuerza"]
+        fuerza = entrada.get("fuerza")
+        fuerza = fdef if fuerza is None else _numero(fuerza, "fuerza")
+        if not fmin <= fuerza <= fmax:
+            raise ErrorTrabajo(f"«fuerza» tiene que estar entre {fmin} y {fmax}.")
+
     return {
         "flujo": flujo,
         "tipo": "imagen" if es_imagen else "video",
@@ -298,6 +360,10 @@ def validar_entrada(entrada) -> dict:
         "audio_referencia": audio,
         "generar_audio": generar_audio,
         "salida": salida,
+        "prompt_base": prompt_base.strip() if prompt_base else None,
+        "angulo": angulo,
+        "calidad": calidad,
+        "fuerza": fuerza,
     }
 
 
@@ -317,6 +383,54 @@ def preparar_prompt_h3(prompt: str, n_referencias: int) -> str:
     for i in range(1, n_referencias + 1):
         lineas.append(f"<Subject {i}> is the character shown in <Picture {i}>.")
     return "\n".join(lineas) + "\n\ndetailed_description:\n" + prompt
+
+
+def clave_de_prompt(prompts: dict, angulo: str | None, n_referencias: int) -> str:
+    """Qué texto base de "_meta.prompts" toca: el del ángulo, el de N referencias o "base"."""
+    if angulo:
+        return angulo
+    if f"refs_{n_referencias}" in prompts:
+        return f"refs_{n_referencias}"
+    return "base"
+
+
+def prompt_de_catalogo(meta: dict, datos: dict, n_referencias: int) -> str:
+    """Texto final de un flujo con "_meta.prompts" (los de catálogo).
+
+    Base = «prompt_base» del pedido (para afinar sin compilar otra imagen) o el del JSON.
+    El «prompt» del pedido es un agregado: reemplaza {EXTRA} si la base lo trae
+    (entonces es obligatorio) o se suma al final.
+    """
+    prompts = meta.get("prompts")
+    extra = (datos.get("prompt") or "").strip()
+    if not prompts:
+        return extra
+    clave = clave_de_prompt(prompts, datos.get("angulo"), n_referencias)
+    base = datos.get("prompt_base") or prompts.get(clave)
+    if not base:
+        raise ErrorTrabajo(f"El flujo no tiene texto base para «{clave}».")
+    if "{EXTRA}" in base:
+        if not extra:
+            raise ErrorTrabajo(
+                "Falta el «prompt»: sin foto de la modelo nueva hay que describirla con texto."
+            )
+        return base.replace("{EXTRA}", extra)
+    return f"{base} {extra}".strip()
+
+
+def banderas_de_catalogo(meta: dict, datos: dict, n_referencias: int) -> dict:
+    """Banderas extra de los flujos de catálogo (calidad, LoRA de ángulos, referencias N)."""
+    banderas = {f"referencia_{i}": True for i in range(1, n_referencias + 1)}
+    banderas["lightning"] = datos.get("calidad") == "rapida"
+    banderas["lora_angulos"] = datos.get("angulo") in (meta.get("angulos_con_lora") or [])
+    return banderas
+
+
+def dimensiones_png(contenido: bytes) -> tuple[int, int] | None:
+    """Ancho y alto reales de un PNG (cabecera IHDR) o None si no es PNG."""
+    if len(contenido) >= 24 and contenido[:8] == b"\x89PNG\r\n\x1a\n" and contenido[12:16] == b"IHDR":
+        return int.from_bytes(contenido[16:20], "big"), int.from_bytes(contenido[20:24], "big")
+    return None
 
 
 def condicion_cumplida(condicion, banderas: dict) -> bool:
@@ -402,7 +516,14 @@ def armar_prompt_api(plantilla: dict, valores: dict, banderas: dict,
     # "_meta.referencias": {"nodo": "8"} o {"nodos": ["6", "7"]} (la misma imagen va a
     # todos), "prefijo" de la entrada y "inicio" del índice (0 en H3, 1 en image1..3 de Qwen).
     conf_refs = meta.get("referencias")
-    if nombres_referencias:
+    if conf_refs and conf_refs.get("modo") == "marcadores":
+        # La plantilla trae sus propios LoadImage con {{REFERENCIA_n}}: no se agrega nada.
+        maximo = conf_refs.get("maximo")
+        if maximo is not None and len(nombres_referencias or []) > maximo:
+            raise ErrorTrabajo(
+                f"Este flujo acepta como máximo {maximo} referencias y llegaron {len(nombres_referencias)}."
+            )
+    elif nombres_referencias:
         ids_destino = []
         if conf_refs:
             ids_destino = conf_refs.get("nodos") or [conf_refs.get("nodo")]
@@ -474,6 +595,37 @@ def _opciones_de_entrada(spec) -> list | None:
         opciones = spec[1].get("options")
         return opciones if isinstance(opciones, list) else None
     return None
+
+
+EXTENSIONES_DE_MODELO = (".safetensors", ".pth", ".pt", ".ckpt", ".bin")
+
+
+def resolver_extensiones_de_modelo(prompt: dict, object_info: dict) -> list[str]:
+    """Si el flujo pide «X.safetensors» y en la carpeta solo está «X.pth» (o al revés), usa el que hay.
+
+    Pasa con Real-ESRGAN, que circula en las dos extensiones. Cambia el prompt en el lugar y
+    devuelve los reemplazos hechos ("pedido → usado") para el registro.
+    """
+    cambios = []
+    for nodo in prompt.values():
+        info = object_info.get(nodo["class_type"]) or {}
+        entradas_info = info.get("input") or {}
+        for nombre_entrada in ENTRADAS_DE_MODELO:
+            valor = nodo["inputs"].get(nombre_entrada)
+            if not isinstance(valor, str):
+                continue
+            spec = (entradas_info.get("required") or {}).get(nombre_entrada) or \
+                   (entradas_info.get("optional") or {}).get(nombre_entrada)
+            opciones = _opciones_de_entrada(spec)
+            if opciones is None or valor in opciones:
+                continue
+            raiz = os.path.splitext(valor)[0]
+            for ext in EXTENSIONES_DE_MODELO:
+                if raiz + ext in opciones:
+                    nodo["inputs"][nombre_entrada] = raiz + ext
+                    cambios.append(f"{valor} → {raiz + ext}")
+                    break
+    return cambios
 
 
 def modelos_faltantes(prompt: dict, object_info: dict, carpetas: dict | None = None) -> list[str]:
@@ -816,6 +968,8 @@ def procesar(entrada: dict, id_trabajo: str) -> dict:
         prompt_texto = datos["prompt"]
         if flujo == "h3-ref":
             prompt_texto = preparar_prompt_h3(prompt_texto, len(nombres_refs))
+        if meta.get("prompts"):
+            prompt_texto = prompt_de_catalogo(meta, datos, len(nombres_refs))
         negativo = datos["prompt_negativo"]
         if negativo is None:
             negativo = meta.get("prompt_negativo_defecto", "")
@@ -832,6 +986,12 @@ def procesar(entrada: dict, id_trabajo: str) -> dict:
             "AUDIO_REFERENCIA": nombre_audio or "",
             "PREFIJO_SALIDA": f"seriesia/{prefijo}",
         }
+        # Flujos con sus propios LoadImage ({{REFERENCIA_n}}): los que no llegan quedan vacíos
+        # y su nodo se quita con "_si": "referencia_n".
+        for i in range(1, reglas.get("max_referencias", 0) + 1):
+            valores[f"REFERENCIA_{i}"] = nombres_refs[i - 1] if i <= len(nombres_refs) else ""
+        if datos["fuerza"] is not None:
+            valores["FUERZA"] = datos["fuerza"]
         if not es_imagen:
             valores.update({
                 "FRAMES": frames,
@@ -844,7 +1004,10 @@ def procesar(entrada: dict, id_trabajo: str) -> dict:
             "generar_audio": datos["generar_audio"],
             "referencias": bool(nombres_refs),
         }
+        if meta.get("prompts") or (meta.get("referencias") or {}).get("modo") == "marcadores":
+            banderas.update(banderas_de_catalogo(meta, datos, len(nombres_refs)))
         prompt = armar_prompt_api(plantilla, valores, banderas, nombres_refs)
+        resolver_extensiones_de_modelo(prompt, object_info)
 
         faltan = clases_faltantes(prompt, object_info)
         if faltan:
@@ -900,13 +1063,18 @@ def _respuesta_imagen(historial: dict, datos: dict, archivos_creados: list[str])
     if item.get("type", "output") == "output":
         archivos_creados.append(os.path.join(DIR_OUTPUT, item.get("subfolder") or "", item["filename"]))
     mime = mime_de_imagen(item["filename"])
+    # El tamaño real manda (en mejorar-2k lo decide la foto de entrada, no el pedido).
+    ancho, alto = dimensiones_png(contenido) or (datos["ancho"], datos["alto"])
     respuesta = {
         "mime": mime,
         "flujo": datos["flujo"],
-        "ancho": datos["ancho"],
-        "alto": datos["alto"],
+        "ancho": ancho,
+        "alto": alto,
         "semilla": datos["semilla"],
     }
+    for clave in ("angulo", "calidad", "fuerza"):
+        if datos.get(clave) is not None:
+            respuesta[clave] = datos[clave]
     if datos["salida"]:
         respuesta["imagen_url"] = subir_video(contenido, datos["salida"], mime, "la imagen")
     else:

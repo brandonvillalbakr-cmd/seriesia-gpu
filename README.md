@@ -43,6 +43,23 @@ Total para los 2 de imagen: **~51 GB**. **Los 6 flujos suman ~181 GB**: caben en
 
 - `qwen-edit-rapido`: el mismo grafo de `qwen-edit-ref` con el interruptor «Enable 4steps LoRA?» de la plantilla encendido: `LoraLoaderModelOnly` (fuerza 1) después de `CFGNorm`, KSampler 4 pasos y cfg 1. Pensado para el probador de ropa (clienta en Picture 1, prenda en Picture 2). Con cfg 1 el `prompt_negativo` casi no influye. Plan B de calidad: la LoRA de 8 pasos ya está en el volumen.
 
+### Catálogo (4) — máquina automática de fotos de ropa
+
+Convertidos de los flujos de panel de `flujos-panel/` (01, 02, 03 y 08) al formato API. El texto base de cada uno está en `_meta.prompts` del JSON (el mismo del panel); el `prompt` del pedido es **opcional** y se suma al final (en `catalogo-modelo` sin foto 2 es obligatorio: describe a la modelo nueva). `prompt_base` (opcional) reemplaza el texto base para afinarlo sin compilar otra imagen. Los `LoadImage` vienen dentro de la plantilla con `{{REFERENCIA_n}}` (`_meta.referencias.modo = "marcadores"`).
+
+| `flujo` | Qué hace | `referencias` (en orden) | Campos propios | Salida por defecto |
+|---|---|---|---|---|
+| `catalogo-prenda` | La modelo se pone la prenda | `[modelo, prenda]` (2) | `calidad` | 864×1536 |
+| `catalogo-modelo` | Misma prenda, otra modelo | `[prenda puesta, modelo nueva?]` (1–2) | `calidad` | 864×1536 |
+| `catalogo-angulos` | **Una** vista por trabajo | `[prenda puesta]` (1) | `angulo` (obligatorio): `frente`, `espalda`, `lado`, `tres_cuartos`, `detalle`, `caminando`; `calidad` | 864×1536 |
+| `mejorar-2k` | La misma foto a ~4 MP (≈1536×2720 en 9:16) | `[foto]` (1) | `fuerza` (denoise 0,1–0,6; 0,33 por defecto) | La da la foto |
+
+- `calidad`: `rapida` (por defecto: LoRA Lightning 4 pasos, cfg 1) o `alta` (20 pasos, cfg 4, como el panel; ~4–5 veces más GPU).
+- `catalogo-angulos`: el panel 03 hacía las 6 fotos en un grafo; aquí la app manda **un trabajo por ángulo** (el contrato devuelve una imagen; así corren en paralelo, se reintenta solo la que falla y cada foto se ve apenas sale). `frente`/`espalda`/`lado`/`tres_cuartos` usan la LoRA Multiángulo (`<sks> …`); `detalle` y `caminando` no.
+- `mejorar-2k`: Real-ESRGAN ×4 → ×0,5 → Z-Image Turbo con denoise bajo. Si en `upscale_models/` está `RealESRGAN_x4plus.pth` en vez de `.safetensors`, el handler usa el que haya.
+- Nodos del panel que no van en API: `MarkdownNote` (solo interfaz), `PrimitiveInt`/`PrimitiveFloat` (pasos y cfg quedan escritos en el `KSampler`). Todo lo demás es del núcleo de ComfyUI v0.44.2.
+- La respuesta trae `ancho`/`alto` **reales del PNG** y repite `angulo`, `calidad` o `fuerza`.
+
 Todos usan **solo nodos nativos de ComfyUI** (las plantillas oficiales de Comfy-Org ya no necesitan nodos personalizados para H3, LTX-2.5, Wan 2.2, Z-Image ni Qwen-Image-Edit). La imagen igual instala VideoHelperSuite y KJNodes con commit fijo, por si luego se usan.
 
 ---
@@ -54,6 +71,8 @@ Todos usan **solo nodos nativos de ComfyUI** (las plantillas oficiales de Comfy-
 Entrada: `flujo`, `prompt`, `prompt_negativo?`, `duracion_seg`, `aspecto`, `ancho`, `alto`, `fps?`, `semilla?`, `imagen_inicial?`, `referencias?`, `audio_referencia?`, `generar_audio`, `salida?` (`url_subida`, `url_publica?`). Los archivos van como `{"nombre","mime","base64"}` o `{"nombre","mime","url"}`.
 
 Salida: `{"video_base64"}` o `{"video_url"}` + `mime`, `flujo`, `ancho`, `alto`, `duracion_seg`, `fps`, `segundos_gpu`. Además devuelve `frames` y `semilla` (campos extra, se pueden ignorar). En error: `{"error": "mensaje en español"}` → RunPod marca el trabajo `FAILED`.
+
+**Flujos de catálogo** (`catalogo-*`, `mejorar-2k`): como los de imagen, con `prompt` opcional y los campos `calidad`, `angulo`, `fuerza` y `prompt_base` descritos arriba.
 
 **Flujos de imagen** (`zimage-t2i`, `qwen-edit-ref`): misma entrada, pero **sin** `duracion_seg`, `fps`, `audio_referencia` ni `generar_audio` (si llegan, se ignoran). Usan `flujo`, `prompt`, `prompt_negativo?` (solo Qwen), `ancho?`/`alto?` (por defecto 768×1344), `semilla?`, `referencias?` (1–3, solo Qwen; si no hay, la `imagen_inicial` hace de referencia 1) y `salida?`. Salida: `{"imagen_base64"}` o `{"imagen_url"}` + `mime` (`image/png`), `flujo`, `ancho`, `alto`, `semilla`, `segundos_gpu`. Con `salida.url_subida` el PUT va con `Content-Type: image/png`.
 
