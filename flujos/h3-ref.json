@@ -1,0 +1,62 @@
+{
+  "_meta": {
+    "descripcion": "MiniMax H3 con FastH3 OmniRef (8 pasos, int8): referencia de personaje (hasta 9 imágenes, en orden <Picture 1>…), audio nativo, voz del TTS opcional anclada como pista desde el fotograma 0 y primer fotograma opcional.",
+    "fuente_verificada": [
+      "https://github.com/Comfy-Org/workflow_templates/blob/main/templates/video_fasth3_ominiref_r2v.json (commit 21d7cc4f, 6/11/2026)",
+      "https://github.com/Comfy-Org/workflow_templates/blob/main/templates/video_minimax_h3_multiframe_reference.json (MiniMaxH3ReferenceToVideo encadenado con MiniMaxH3AddGuide)",
+      "https://github.com/Comfy-Org/ComfyUI/blob/v0.44.2/comfy_extras/nodes_minimax_h3.py (FPS=24, rejilla 17k+5, ancho/alto paso 32, ref_images hasta 9, AddGuide con image/audio)",
+      "https://github.com/Comfy-Org/ComfyUI/blob/v0.44.2/comfy_extras/nodes_sparse_attention.py (BlockSparseAttention método vsa)",
+      "https://huggingface.co/FastVideo/FastH3-OmniRef-Comfy (sha 82eff2a6)",
+      "https://huggingface.co/Comfy-Org/MiniMax-H3 (sha 54472221)",
+      "https://docs.comfy.org/tutorials/video/minimax/minimax-h3 (FastH3 requiere ComfyUI 0.36.0+)",
+      "https://github.com/zxcHolmes/minimax-h3-studio/wiki (pasos y velocidad en RTX 4090)"
+    ],
+    "fecha_verificacion": "2026-11-07",
+    "comfyui_minimo": "0.36.0 según docs.comfy.org; el Dockerfile instala v0.44.2",
+    "nodos_requeridos": ["UNETLoader", "MiniMaxH3SigmaShift", "ModelAttentionBackend", "BlockSparseAttention", "CLIPLoader", "VAELoader", "MiniMaxH3ReferenceToVideo", "LoadImage", "LoadAudio", "MiniMaxH3AddGuide", "BasicGuider", "RandomNoise", "KSamplerSelect", "BasicScheduler", "SamplerCustomAdvanced", "VAEDecode", "VAEDecodeAudio", "CreateVideo", "SaveVideo"],
+    "nodos_personalizados": "ninguno (H3 es nativo de ComfyUI). El handler agrega un LoadImage por cada referencia y lo conecta a la entrada 'ref_images.ref_image_N' del nodo 8.",
+    "referencias": {"nodo": "8", "prefijo": "ref_images.ref_image_", "maximo": 9},
+    "modelos": [
+      {"archivo": "fasth3_omniref_8step_pruned_int8_convrot.safetensors", "carpeta": "diffusion_models", "repo": "FastVideo/FastH3-OmniRef-Comfy", "ruta": "diffusion_models/fasth3_omniref_8step_pruned_int8_convrot.safetensors", "gb": 22.21},
+      {"archivo": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors", "carpeta": "text_encoders", "repo": "Comfy-Org/MiniMax-H3", "ruta": "text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors", "gb": 15.69},
+      {"archivo": "minimax_h3_video_vae_int8_convrot.safetensors", "carpeta": "vae", "repo": "Comfy-Org/MiniMax-H3", "ruta": "vae/minimax_h3_video_vae_int8_convrot.safetensors", "gb": 2.81},
+      {"archivo": "minimax_h3_audio_vae_fp32.safetensors", "carpeta": "vae", "repo": "Comfy-Org/MiniMax-H3", "ruta": "vae/minimax_h3_audio_vae_fp32.safetensors", "gb": 0.61}
+    ],
+    "carpetas_de_modelos": {
+      "fasth3_omniref_8step_pruned_int8_convrot.safetensors": "diffusion_models",
+      "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors": "text_encoders",
+      "minimax_h3_video_vae_int8_convrot.safetensors": "vae",
+      "minimax_h3_audio_vae_fp32.safetensors": "vae"
+    },
+    "parametros": "8 pasos, euler, scheduler simple, shift video/audio 12/3, atención dispersa VSA al 10 % (obligatoria para FastH3), backend 'comfy kitchen attention'. Siempre 24 fps; frames en la rejilla 17k+5 (124 = ~5,2 s; 362 = ~15 s); lados múltiplo de 32 (768x1344 en 9:16). Sin prompt negativo (BasicGuider).",
+    "vram_aproximada": "24 GB de VRAM + 64 GB de RAM (wiki de FastH3, RTX 4090 a 768p ~65–70 s por clip de 5 s); cómodo con 80–96 GB.",
+    "licencia": "MiniMax H3: prohíbe usar o mostrar los videos en EE. UU., UE, Reino Unido y Corea del Sur; atribución «MiniMax H3» visible; tope de US$20 M de ingresos. Ver docs/10-SERVIDOR-GPU-PROPIO.md sección 1.4.",
+    "_TODO": [
+      "Audio de referencia: se ancla con MiniMaxH3AddGuide (audio, frame_idx 0) para que la voz del TTS sea la pista y los labios la sigan. La otra opción es la entrada 'ref_audios' de MiniMaxH3ReferenceToVideo (solo timbre de voz, <Audio j> en el prompt). Comparar ambas en la prueba.",
+      "La imagen_inicial se ancla como primer fotograma con el mismo MiniMaxH3AddGuide (como en la plantilla multiframe). Si no llegan referencias, la imagen inicial además hace de <Picture 1>.",
+      "El prompt: H3 nombra las imágenes <Picture 1>…; el handler antepone 'subject_definitions' que une <Subject i> con <Picture i> si el prompt no menciona ninguna <Picture N>. Afinar con VIDEO_PROMPT_WRITING_GUIDE_ref_en.md.",
+      "El codificador de texto nvfp4_awq es el de la plantilla oficial; si en la GPU elegida da error o va lento, probar qwen3vl_32b_minimax_h3_int8_convrot.safetensors (27,1 GB, mismo repo).",
+      "Confirmar en la primera corrida las claves 'selection'/'selection.keep_percent' (BlockSparseAttention) y 'format.codec' (SaveVideo): son entradas DynamicCombo y en la API van como 'padre.hijo'."
+    ]
+  },
+  "1": {"class_type": "UNETLoader", "inputs": {"unet_name": "fasth3_omniref_8step_pruned_int8_convrot.safetensors", "weight_dtype": "default"}},
+  "2": {"class_type": "MiniMaxH3SigmaShift", "inputs": {"model": ["1", 0], "shift_video": 12.0, "shift_audio": 3.0}},
+  "3": {"class_type": "ModelAttentionBackend", "inputs": {"model": ["2", 0], "attention": "comfy kitchen attention"}},
+  "4": {"class_type": "BlockSparseAttention", "inputs": {"model": ["3", 0], "selection": "vsa", "selection.keep_percent": 10.0, "start_percent": 0.0, "end_percent": 1.0, "dense_blocks": "", "min_tokens": 12288, "extra_tokens": 256, "sink_conditioning": "exact_kv_and_rows", "verbose": false}},
+  "5": {"class_type": "CLIPLoader", "inputs": {"clip_name": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors", "type": "minimax", "device": "default"}},
+  "6": {"class_type": "VAELoader", "_meta": {"title": "VAE de video"}, "inputs": {"vae_name": "minimax_h3_video_vae_int8_convrot.safetensors"}},
+  "7": {"class_type": "VAELoader", "_meta": {"title": "VAE de audio"}, "inputs": {"vae_name": "minimax_h3_audio_vae_fp32.safetensors"}},
+  "8": {"class_type": "MiniMaxH3ReferenceToVideo", "_meta": {"title": "Referencias (el handler conecta ref_images.ref_image_0..8)"}, "inputs": {"clip": ["5", 0], "vae": ["6", 0], "audio_vae": ["7", 0], "prompt": "{{PROMPT}}", "width": "{{ANCHO}}", "height": "{{ALTO}}", "length": "{{FRAMES}}", "ref_image_size": "match"}},
+  "9": {"class_type": "LoadImage", "_si": "imagen_inicial", "_meta": {"title": "Primer fotograma (opcional)"}, "inputs": {"image": "{{IMAGEN_INICIAL}}"}},
+  "10": {"class_type": "LoadAudio", "_si": "audio_referencia", "_meta": {"title": "Voz del TTS (opcional)"}, "inputs": {"audio": "{{AUDIO_REFERENCIA}}"}},
+  "11": {"class_type": "MiniMaxH3AddGuide", "_si": ["imagen_inicial", "audio_referencia"], "_meta": {"title": "Anclar primer fotograma y/o voz en el fotograma 0"}, "inputs": {"positive": ["8", 0], "latent": ["8", 1], "vae": ["6", 0], "audio_vae": ["7", 0], "image": ["9", 0], "audio": ["10", 0], "frame_idx": 0}},
+  "12": {"class_type": "BasicGuider", "inputs": {"model": ["4", 0], "conditioning": {"_si": ["imagen_inicial", "audio_referencia"], "entonces": ["11", 0], "si_no": ["8", 0]}}},
+  "13": {"class_type": "RandomNoise", "inputs": {"noise_seed": "{{SEMILLA}}"}},
+  "14": {"class_type": "KSamplerSelect", "inputs": {"sampler_name": "euler"}},
+  "15": {"class_type": "BasicScheduler", "inputs": {"model": ["4", 0], "scheduler": "simple", "steps": 8, "denoise": 1.0}},
+  "16": {"class_type": "SamplerCustomAdvanced", "inputs": {"noise": ["13", 0], "guider": ["12", 0], "sampler": ["14", 0], "sigmas": ["15", 0], "latent_image": ["8", 1]}},
+  "17": {"class_type": "VAEDecode", "inputs": {"samples": ["16", 0], "vae": ["6", 0]}},
+  "18": {"class_type": "VAEDecodeAudio", "_si": "generar_audio", "inputs": {"samples": ["16", 0], "vae": ["7", 0]}},
+  "19": {"class_type": "CreateVideo", "inputs": {"images": ["17", 0], "audio": ["18", 0], "fps": "{{FPS}}"}},
+  "20": {"class_type": "SaveVideo", "inputs": {"video": ["19", 0], "filename_prefix": "{{PREFIJO_SALIDA}}", "format": "mp4", "format.codec": "h264"}}
+}

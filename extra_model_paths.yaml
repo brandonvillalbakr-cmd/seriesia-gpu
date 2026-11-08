@@ -1,0 +1,28 @@
+# Rutas de modelos del volumen de red para ComfyUI.
+#
+# La imagen base runpod/worker-comfyui trae su propio extra_model_paths.yaml
+# (src/extra_model_paths.yaml, versión 5.10.0) con base_path /runpod-volume, pero
+# NO incluye diffusion_models, text_encoders ni latent_upscale_models. Las dos
+# primeras igual funcionan por los alias viejos «unet» y «clip» (map_legacy en
+# folder_paths.py de ComfyUI), pero latent_upscale_models (LTX-2.5) no: por eso
+# este archivo reemplaza al de la base.
+#
+# En los trabajadores serverless el volumen se monta en /runpod-volume.
+# En un pod normal el mismo volumen se monta en /workspace (lo usa descargar-modelos.sh).
+runpod_worker_comfy:
+  base_path: /runpod-volume
+  checkpoints: models/checkpoints/
+  clip: models/clip/
+  clip_vision: models/clip_vision/
+  configs: models/configs/
+  controlnet: models/controlnet/
+  embeddings: models/embeddings/
+  loras: models/loras/
+  upscale_models: models/upscale_models/
+  vae: models/vae/
+  unet: models/unet/
+  diffusion_models: models/diffusion_models/
+  text_encoders: models/text_encoders/
+  latent_upscale_models: models/latent_upscale_models/
+  model_patches: models/model_patches/
+  audio_encoders: models/audio_encoders/

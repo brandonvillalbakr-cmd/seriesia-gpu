@@ -1,0 +1,12 @@
+{
+  "input": {
+    "flujo": "wan22-ti2v-5b",
+    "prompt": "Vertical cinematic shot of a quiet city street at dawn, soft mist, a woman in a red coat walks slowly toward the camera, gentle handheld camera movement.",
+    "duracion_seg": 3,
+    "aspecto": "9:16",
+    "ancho": 720,
+    "alto": 1280,
+    "semilla": 12345,
+    "generar_audio": false
+  }
+}
